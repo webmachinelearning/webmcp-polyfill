@@ -30,5 +30,7 @@ export default defineConfig({
         launchOptions: { args: ["--enable-experimental-web-platform-features"] },
       },
     },
+    { name: "extension-chromium", testMatch: "extension.test.ts" },
+    { name: "extension-firefox", testMatch: "extension.test.ts", use: { browserName: "firefox" } },
   ],
 });

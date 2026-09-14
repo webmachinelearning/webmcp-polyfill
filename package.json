@@ -8,7 +8,8 @@
     "url": "git+https://github.com/webmachinelearning/webmcp-polyfill.git"
   },
   "files": [
-    "dist"
+    "dist",
+    "EXTENSIONS.md"
   ],
   "type": "module",
   "sideEffects": [
@@ -34,8 +35,10 @@
   "devDependencies": {
     "@playwright/test": "^1.55.0",
     "@types/node": "^24.13.4",
+    "@types/selenium-webdriver": "4.35.6",
     "esbuild": "^0.25.0",
     "oxlint": "1.82.0",
+    "selenium-webdriver": "4.49.0",
     "typescript": "^5.9.0"
   },
   "packageManager": "pnpm@10.14.0",

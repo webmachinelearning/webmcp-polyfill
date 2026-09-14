@@ -34,6 +34,7 @@ try {
     .map((entry) => relative(installed, join(entry.parentPath, entry.name)).replaceAll("\\", "/"))
     .sort();
   assert.deepEqual(files, [
+    "EXTENSIONS.md",
     "LICENSE",
     "README.md",
     "dist/auto.d.ts",

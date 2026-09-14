@@ -16,7 +16,7 @@ compatibility belongs here.
    browser issue, or standards-position discussion alone is not the specification.
 4. Add the smallest real-browser regression that demonstrates the behavior.
    Tests load the built bundle from a real server; do not replace DOM APIs,
-   page requests, or tool callbacks with mocks.
+   extension APIs, page requests, or tool callbacks with mocks.
 
 ## Validate
 

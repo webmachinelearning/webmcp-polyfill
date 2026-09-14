@@ -56,6 +56,8 @@ The implementation follows [draft source `cc45efc`](https://github.com/webmachin
 
 The API tracks the draft. Breaking changes ship with notes: in minor releases while the version is 0.x, in majors after 1.0.
 
+For use in an existing extension, see [extension integration](EXTENSIONS.md).
+
 ## Development
 
 See [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) for browser setup, test commands, draft alignment, and known limitations.

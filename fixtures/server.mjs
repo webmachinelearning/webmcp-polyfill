@@ -8,6 +8,10 @@ const app = `<!doctype html><meta charset="utf-8"><title>WebMCP counter</title>
 <button id="execute">Execute on page</button>
 <output id="status">loading</output><output id="result"></output>`;
 
+// Only /extension drives these; the extension's isolated content script writes them.
+const extensionUI = `<button id="extension-run">Execute from extension</button>
+<output id="extension-tools"></output><output id="extension-result"></output>`;
+
 createServer(async (request, response) => {
   const path = new URL(request.url, "http://localhost").pathname;
   response.setHeader("Origin-Agent-Cluster", path === "/no-cluster" ? "?0" : "?1");
@@ -23,10 +27,12 @@ createServer(async (request, response) => {
     } else if (["/", "/health", "/no-cluster"].includes(path)) {
       response.setHeader("Content-Type", "text/html");
       response.end("<!doctype html><title>WebMCP test</title>");
-    } else if (path === "/app") {
+    } else if (path === "/app" || path === "/extension") {
       response.setHeader("Content-Type", "text/html");
       response.end(
-        app + '<script src="/auto.js"></script><script type="module" src="/app.js"></script>',
+        app +
+          (path === "/app" ? '<script src="/auto.js"></script>' : extensionUI) +
+          '<script type="module" src="/app.js"></script>',
       );
     } else {
       response.writeHead(404).end();
