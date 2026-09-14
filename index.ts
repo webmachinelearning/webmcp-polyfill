@@ -6,8 +6,27 @@ export type { WebMCP } from "webmcp-types";
  * SPDX-License-Identifier: MIT
  */
 
-// Capture the constructor before a detached WindowProxy stops exposing it.
+// Mirrors webmachinelearning/webmcp-types#3; delete once that ships in a release.
+declare global {
+  namespace WebMCP {
+    interface ModelContextExecuteToolOptions {
+      signal?: AbortSignal;
+    }
+    interface ModelContext {
+      executeTool(
+        tool: RegisteredTool,
+        inputObject?: object,
+        options?: ModelContextExecuteToolOptions,
+      ): Promise<string>;
+    }
+  }
+}
+
+// Capture native bindings before a detached WindowProxy stops exposing them. HTML declares
+// `window` as [LegacyUnforgeable], so its getter is an own property of every Window; a realm
+// without one has no Document either, and `installWebMCP` exits early there.
 const NativeDOMException = globalThis.DOMException;
+const windowGetter = Object.getOwnPropertyDescriptor(globalThis, "window")?.get;
 
 interface Tool {
   metadata: Omit<WebMCP.RegisteredTool, "inputSchema">;
@@ -156,7 +175,7 @@ function activeView(owner: Document): Window {
 }
 
 // Timers approximate the unavailable WebMCP task source; exact
-// inter-source ordering requires native support.
+// inter-source ordering and document-navigation semantics require native support.
 function queueTask(callback: () => void): void {
   setTimeout(callback, 0);
 }
@@ -199,7 +218,7 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     const description = domString(required(descriptor.description, "description"));
     const callback = required(descriptor.execute, "execute");
     if (typeof callback !== "function") throw new TypeError("execute must be a function");
-    // SAFETY: Web IDL requires callability only.
+    // SAFETY: Web IDL requires callability only; arguments and results are converted at invocation.
     const execute = callback as WebMCP.ToolExecuteCallback<object>;
     const inputSchema = descriptor.inputSchema;
     if (inputSchema !== undefined && !isObject(inputSchema))
@@ -275,6 +294,112 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     return new Promise((resolve) => queueTask(() => resolve(tools)));
   }
+
+  async executeTool(
+    tool: WebMCP.RegisteredTool,
+    inputObject: object | undefined = undefined,
+    options: WebMCP.ModelContextExecuteToolOptions = {},
+  ): Promise<string> {
+    // Web IDL converts every member of RegisteredTool, in lexicographical order, before the
+    // algorithm runs, so the conversions whose results are unused below are kept for their
+    // observable effects: reading the caller's getters, and throwing TypeError.
+    const descriptor = dictionary(tool);
+    toolAnnotations(descriptor.annotations);
+    domString(required(descriptor.description, "description"));
+    const inputSchema = descriptor.inputSchema;
+    if (inputSchema !== undefined && !isObject(inputSchema))
+      throw new TypeError("inputSchema must be an object");
+    const name = domString(required(descriptor.name, "name"));
+    const origin = domString(required(descriptor.origin, "origin")).toWellFormed();
+    const title = descriptor.title;
+    if (title !== undefined) domString(title);
+    const target = required(descriptor.window, "window");
+    if (!isObject(target)) throw new TypeError("window must be a Window");
+    // SAFETY: the native getter performs the Window brand check, including for cross-origin
+    // WindowProxy objects, and throws for anything else. Its value is unused.
+    windowGetter!.call(target);
+    const signal = signalOption(dictionary(options).signal);
+    activeView(this.#owner);
+    let expectedOrigin = "null";
+    try {
+      expectedOrigin = new URL(origin).origin;
+    } catch {
+      // An unparseable origin falls through to the opaque check below.
+    }
+    // `URL.origin` serializes an opaque origin as "null", which no document's origin matches.
+    if (expectedOrigin === "null") {
+      throw new NativeDOMException("Invalid or opaque origin", "NotSupportedError");
+    }
+    if (!isObject(inputObject)) throw new TypeError("inputObject must be an object");
+    const input = serialize(inputObject);
+    signal?.throwIfAborted();
+    if (target !== this.#owner.defaultView) {
+      // The draft rejects a target in another traversable with UnknownError, and reports a
+      // target document that has no such tool the same way. Routing to another document in this
+      // traversable needs native WebMCP, so both arrive here indistinguishably.
+      throw new NativeDOMException("Tool execution failed", "UnknownError");
+    }
+
+    return new Promise<string>((resolve, reject) => {
+      const controller = new AbortController();
+      let settled = false;
+      let callbackSettled = false;
+      // Returns true to the first caller only; whoever wins owns settling the promise.
+      const claimSettlement = (): boolean => {
+        if (settled) return false;
+        settled = true;
+        signal?.removeEventListener("abort", abort);
+        return true;
+      };
+      const abort = (): void => {
+        if (!claimSettlement()) return;
+        reject(signal!.reason);
+        // The callback receives a fresh signal and a default AbortError, while the caller
+        // receives its own abort reason. Aborting a task later lets the caller's rejection
+        // arrive first, and leaves a callback that has already settled alone.
+        queueTask(() => {
+          if (!callbackSettled) controller.abort();
+        });
+      };
+      const fail = (): void => {
+        callbackSettled = true;
+        queueTask(() => {
+          if (claimSettlement())
+            reject(new NativeDOMException("Tool execution failed", "UnknownError"));
+        });
+      };
+      const complete = (value: unknown): void => {
+        callbackSettled = true;
+        // Checked before serializing: a cancelled call must not run the author's toJSON.
+        if (settled) return;
+        try {
+          const result = serialize(value);
+          queueTask(() => {
+            if (claimSettlement()) resolve(result);
+          });
+        } catch {
+          fail();
+        }
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      queueTask(() => {
+        if (settled) return;
+        try {
+          // Every dispatch failure is indistinguishable to the caller by design, so each bare
+          // throw funnels into fail() and the draft's UnknownError.
+          const view = activeView(this.#owner);
+          const entry = this.#tools.get(name);
+          if (!entry || expectedOrigin !== view.origin) throw new Error();
+          const args: unknown = JSON.parse(input);
+          if (!isObject(args)) throw new Error();
+          const { execute } = entry;
+          Promise.resolve(execute(args, { signal: controller.signal })).then(complete, fail);
+        } catch {
+          fail();
+        }
+      });
+    });
+  }
 }
 
 const contexts = new WeakMap<Document, ModelContextPolyfill>();
@@ -299,6 +424,7 @@ Object.defineProperties(ModelContextPolyfill.prototype, {
   // Class members are non-enumerable; Web IDL interface members are enumerable.
   registerTool: { enumerable: true },
   getTools: { enumerable: true },
+  executeTool: { enumerable: true },
   ontoolchange: { enumerable: true },
 });
 

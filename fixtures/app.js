@@ -31,4 +31,14 @@ element("unregister").onclick = async () => {
   await context.getTools();
   element("status").textContent = "unregistered";
 };
+element("execute").onclick = async () => {
+  try {
+    const [tool] = await context.getTools();
+    element("result").textContent = await context.executeTool(tool, {
+      amount: Number(element("amount").value),
+    });
+  } catch (error) {
+    element("result").textContent = error.name;
+  }
+};
 await register();

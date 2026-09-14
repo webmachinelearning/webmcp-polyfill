@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 
 const app = `<!doctype html><meta charset="utf-8"><title>WebMCP counter</title>
 <h1>Counter</h1><output id="count">0</output>
+<label>Amount <input id="amount" type="number" value="2"></label>
 <button id="register">Register</button><button id="unregister">Unregister</button>
-<output id="status">loading</output>`;
+<button id="execute">Execute on page</button>
+<output id="status">loading</output><output id="result"></output>`;
 
 createServer(async (request, response) => {
   const path = new URL(request.url, "http://localhost").pathname;

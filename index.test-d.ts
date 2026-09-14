@@ -14,8 +14,13 @@ if (document.modelContext) {
       return { name, aborted, invalid };
     },
   });
-  const tools: WebMCP.RegisteredTool[] = await context.getTools();
-  // @ts-expect-error Execution is deferred to a separate change.
-  void context.executeTool;
-  void tools;
+  const [tool] = await context.getTools();
+  const result: string = await context.executeTool(
+    tool,
+    {},
+    { signal: new AbortController().signal },
+  );
+  // @ts-expect-error The current draft accepts objects, not serialized JSON.
+  context.executeTool(tool, "{}");
+  void result;
 }
