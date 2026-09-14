@@ -1,0 +1,10 @@
+{
+  "plugins": ["typescript", "unicorn"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "typescript/no-explicit-any": "error",
+    "eslint/no-shadow": "error"
+  }
+}

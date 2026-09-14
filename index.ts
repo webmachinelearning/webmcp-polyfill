@@ -1,0 +1,355 @@
+import type { WebMCP } from "webmcp-types";
+export type { WebMCP } from "webmcp-types";
+
+/*!
+ * Copyright (c) 2026 WebMCP polyfill contributors
+ * SPDX-License-Identifier: MIT
+ */
+
+// Capture the constructor before a detached WindowProxy stops exposing it.
+const NativeDOMException = globalThis.DOMException;
+
+interface Tool {
+  metadata: Omit<WebMCP.RegisteredTool, "inputSchema">;
+  /**
+   * Stored serialized rather than as an object: registration snapshots the schema so later
+   * mutation of the author's object is invisible, every `getTools()` hands back an independent
+   * deep copy, and a schema that cannot be serialized fails at registration time.
+   */
+  schema?: string;
+  execute: WebMCP.ToolExecuteCallback<object>;
+}
+
+function isObject(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
+// https://webidl.spec.whatwg.org/#es-dictionary
+function dictionary(value: unknown): Record<PropertyKey, unknown> {
+  if (value == null) return {};
+  if (!isObject(value)) throw new TypeError("Expected a dictionary");
+  // SAFETY: Web IDL dictionaries admit any object; members remain unknown until converted.
+  return value as Record<PropertyKey, unknown>;
+}
+
+function toolAnnotations(value: unknown): WebMCP.ToolAnnotations | undefined {
+  if (value === undefined) return undefined;
+  const annotations = dictionary(value);
+  return {
+    consequentialHint: Boolean(annotations.consequentialHint),
+    readOnlyHint: Boolean(annotations.readOnlyHint),
+    untrustedContentHint: Boolean(annotations.untrustedContentHint),
+  };
+}
+
+// https://webidl.spec.whatwg.org/#es-DOMString
+function domString(value: unknown): string {
+  if (typeof value === "symbol") throw new TypeError("Cannot convert a Symbol to a string");
+  return String(value);
+}
+
+function required(value: unknown, name: string): unknown {
+  if (value === undefined) throw new TypeError(`${name} is required`);
+  return value;
+}
+
+function serialize(value: unknown): string {
+  const result = JSON.stringify(value);
+  if (result === undefined) throw new TypeError("Value is not JSON-serializable");
+  return result;
+}
+
+function signalOption(value: unknown): AbortSignal | undefined {
+  // Native composition validates the signal and still follows abort when an earlier listener
+  // on the caller's own signal calls stopImmediatePropagation. The draft registers an abort
+  // algorithm, which runs before the abort event; JavaScript cannot register one.
+  // SAFETY: AbortSignal.any performs the native brand check, including across realms.
+  return value === undefined ? undefined : AbortSignal.any([value as AbortSignal]);
+}
+
+// https://webidl.spec.whatwg.org/#es-sequence
+function originSequence(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!isObject(value)) throw new TypeError("Origins must be a sequence");
+  const iterator: unknown = Reflect.get(value, Symbol.iterator);
+  if (typeof iterator !== "function") throw new TypeError("Origins must be a sequence");
+  // Web IDL gets the iterator method once and calls it with the original receiver.
+  return Array.from({ [Symbol.iterator]: () => Reflect.apply(iterator, value, []) }, (origin) =>
+    domString(origin).toWellFormed(),
+  );
+}
+
+// Every non-empty list is refused; the loop only decides which failure the caller sees, so an
+// origin that native WebMCP would reject outright keeps failing with SecurityError instead of
+// being masked by the polyfill's NotSupportedError.
+//
+// This approximates https://w3c.github.io/webappsec-secure-contexts/#is-origin-trustworthy on
+// the URL's own scheme and host. The draft evaluates the URL's origin, so a scheme that
+// inherits an inner origin (`blob:`) is judged on the outer scheme here; that only changes
+// which of the two rejections a caller sees.
+function rejectUnsupportedOrigins(origins: string[]): void {
+  for (const origin of origins) {
+    let url: URL;
+    try {
+      url = new URL(origin);
+    } catch {
+      throw new NativeDOMException("Invalid origin", "SecurityError");
+    }
+    const local =
+      url.hostname === "[::1]" ||
+      // Loopback is a CIDR match on 127.0.0.0/8, not a prefix: the URL parser canonicalizes
+      // every numeric form to dotted-quad, so "127.example.test" is a domain, not loopback.
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname) ||
+      url.hostname === "localhost" ||
+      url.hostname === "localhost." ||
+      url.hostname.endsWith(".localhost") ||
+      url.hostname.endsWith(".localhost.");
+    if (
+      !["https:", "wss:", "file:"].includes(url.protocol) &&
+      !(["http:", "ws:"].includes(url.protocol) && local)
+    ) {
+      throw new NativeDOMException("Origin is not potentially trustworthy", "SecurityError");
+    }
+  }
+  if (origins.length) {
+    throw new NativeDOMException("Cross-document tools require native WebMCP", "NotSupportedError");
+  }
+}
+
+function activeView(owner: Document): Window {
+  const view = owner.defaultView;
+  if (!view || view.document !== owner || (view.frameElement && !view.frameElement.isConnected)) {
+    throw new NativeDOMException("The document is not fully active", "InvalidStateError");
+  }
+  if (view.originAgentCluster === false && view.location.protocol !== "file:") {
+    throw new NativeDOMException("An origin-keyed agent cluster is required", "SecurityError");
+  }
+  // Chromium is the only engine shipping either name, and it ships `featurePolicy` unflagged
+  // while `permissionsPolicy` is still behind an experimental flag, so the second branch is the
+  // one that runs today. `features()` is consulted first because a browser with the policy
+  // object but no `tools` feature would otherwise get a meaningless default from allowsFeature.
+  const policy =
+    ("permissionsPolicy" in owner ? owner.permissionsPolicy : undefined) ??
+    ("featurePolicy" in owner ? owner.featurePolicy : undefined);
+  if (
+    isObject(policy) &&
+    "features" in policy &&
+    "allowsFeature" in policy &&
+    typeof policy.features === "function" &&
+    typeof policy.allowsFeature === "function" &&
+    policy.features().includes("tools")
+  ) {
+    if (policy.allowsFeature("tools")) return view;
+    throw new NativeDOMException("WebMCP is disabled by Permissions Policy", "NotAllowedError");
+  }
+  // With no usable policy surface the document cannot be asked whether WebMCP is permitted, so
+  // same-origin access stands in for the feature's `self` default allowlist.
+  try {
+    void view.parent.document;
+  } catch {
+    throw new NativeDOMException(
+      "Cross-origin frames require native Permissions Policy",
+      "NotAllowedError",
+    );
+  }
+  return view;
+}
+
+// Timers approximate the unavailable WebMCP task source; exact
+// inter-source ordering requires native support.
+function queueTask(callback: () => void): void {
+  setTimeout(callback, 0);
+}
+
+// Parameters carry `= …` defaults rather than `?` because Web IDL fixes each operation's
+// `length` at its required-argument count, and only defaults reduce the length TypeScript emits.
+class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
+  readonly #owner: Document;
+  readonly #tools = new Map<string, Tool>();
+  #handler: WebMCP.ModelContext["ontoolchange"] = null;
+  readonly #listener = (event: Event): void => {
+    this.#handler?.call(this, event);
+  };
+
+  constructor(owner: Document) {
+    super();
+    this.#owner = owner;
+  }
+
+  get ontoolchange(): WebMCP.ModelContext["ontoolchange"] {
+    return this.#handler;
+  }
+
+  set ontoolchange(handler: WebMCP.ModelContext["ontoolchange"]) {
+    const next = typeof handler === "function" ? handler : null;
+    // Replacing one callable with another keeps the handler's place in the listener list, which
+    // is why the listener is not re-registered. Clearing it deactivates the handler and removes
+    // the listener, so setting a callable again appends a new one at the end.
+    if (!this.#handler && next) this.addEventListener("toolchange", this.#listener);
+    if (this.#handler && !next) this.removeEventListener("toolchange", this.#listener);
+    this.#handler = next;
+  }
+
+  async registerTool(
+    tool: object,
+    options: WebMCP.ModelContextRegisterToolOptions = {},
+  ): Promise<void> {
+    const descriptor = dictionary(tool);
+    const annotations = toolAnnotations(descriptor.annotations);
+    const description = domString(required(descriptor.description, "description"));
+    const callback = required(descriptor.execute, "execute");
+    if (typeof callback !== "function") throw new TypeError("execute must be a function");
+    // SAFETY: Web IDL requires callability only.
+    const execute = callback as WebMCP.ToolExecuteCallback<object>;
+    const inputSchema = descriptor.inputSchema;
+    if (inputSchema !== undefined && !isObject(inputSchema))
+      throw new TypeError("inputSchema must be an object");
+    const name = domString(required(descriptor.name, "name"));
+    const rawTitle = descriptor.title;
+    const title = rawTitle === undefined ? "" : domString(rawTitle).toWellFormed();
+    const settings = dictionary(options);
+    const exposedTo = originSequence(settings.exposedTo);
+    const signal = signalOption(settings.signal);
+
+    const view = activeView(this.#owner);
+    // Duplicate, then name, then description: the draft's order.
+    if (this.#tools.has(name)) {
+      throw new NativeDOMException(`A tool named ${name} is already registered`, "InvalidStateError");
+    }
+    if (!/^[A-Za-z0-9_.-]{1,128}$/u.test(name)) {
+      throw new NativeDOMException(
+        `Tool names are 1 to 128 characters of ASCII alphanumerics, "_", "-" or ".": ${name}`,
+        "InvalidStateError",
+      );
+    }
+    if (!description) {
+      throw new NativeDOMException("A tool description cannot be empty", "InvalidStateError");
+    }
+    const schema = inputSchema === undefined ? undefined : serialize(inputSchema);
+    signal?.throwIfAborted();
+    rejectUnsupportedOrigins(exposedTo);
+
+    const entry: Tool = {
+      metadata: { name, title, description, window: view, origin: view.origin },
+      schema,
+      execute,
+    };
+    if (annotations !== undefined) entry.metadata.annotations = annotations;
+    return new Promise<void>((resolve, reject) => {
+      // One listener covers both roles: before `resolve` runs it rejects and rolls the
+      // registration back, and afterwards `reject` is inert so it only unregisters. Nothing else
+      // ever removes this entry, since registering the name again while it is held throws.
+      signal?.addEventListener(
+        "abort",
+        () => {
+          this.#tools.delete(name);
+          queueTask(() => this.dispatchEvent(new Event("toolchange")));
+          reject(signal.reason);
+        },
+        { once: true },
+      );
+      this.#tools.set(name, entry);
+      queueTask(() => this.dispatchEvent(new Event("toolchange")));
+      queueTask(resolve);
+    });
+  }
+
+  async getTools(
+    options: WebMCP.ModelContextGetToolOptions = {},
+  ): Promise<WebMCP.RegisteredTool[]> {
+    const fromOrigins = originSequence(dictionary(options).fromOrigins);
+    activeView(this.#owner);
+    rejectUnsupportedOrigins(fromOrigins);
+    const tools = [...this.#tools.values()]
+      // Web IDL creates a dictionary's members in lexicographical order.
+      .map(({ metadata, schema }): WebMCP.RegisteredTool => ({
+        ...(metadata.annotations && { annotations: { ...metadata.annotations } }),
+        description: metadata.description,
+        ...(schema !== undefined && { inputSchema: JSON.parse(schema) as object }),
+        name: metadata.name,
+        origin: metadata.origin,
+        title: metadata.title,
+        window: metadata.window,
+      }))
+      // The draft sorts by name, comparing code units, which is what `<` does on strings.
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    return new Promise((resolve) => queueTask(() => resolve(tools)));
+  }
+}
+
+const contexts = new WeakMap<Document, ModelContextPolyfill>();
+
+// Web IDL interface-object plumbing. A conforming `ModelContext` exposes a non-constructible
+// interface object inheriting EventTarget, a prototype branded `[object ModelContext]`, and
+// enumerable prototype members, none of which a plain class produces.
+const modelContextConstructor = function ModelContext(): never {
+  throw new TypeError("Illegal constructor");
+};
+// Not redundant with the function expression's name: the shipped bundle is minified and the
+// minifier drops that binding, leaving `name` empty. The interface-shape test asserts it.
+Object.defineProperty(modelContextConstructor, "name", { value: "ModelContext" });
+Object.defineProperty(modelContextConstructor, "prototype", {
+  value: ModelContextPolyfill.prototype,
+  writable: false,
+});
+Object.setPrototypeOf(modelContextConstructor, EventTarget);
+Object.defineProperties(ModelContextPolyfill.prototype, {
+  constructor: { value: modelContextConstructor, configurable: true, writable: true },
+  [Symbol.toStringTag]: { value: "ModelContext", configurable: true },
+  // Class members are non-enumerable; Web IDL interface members are enumerable.
+  registerTool: { enumerable: true },
+  getTools: { enumerable: true },
+  ontoolchange: { enumerable: true },
+});
+
+/**
+ * Install the document-local WebMCP API when the current realm has no implementation.
+ *
+ * Does nothing without a `Document`, outside a secure context, or where `document.modelContext`
+ * already exists, so repeat calls are safe and a native implementation is never replaced. Only
+ * the calling realm is affected; each frame installs separately.
+ *
+ * @throws {TypeError} when the realm cannot be extended, rather than installing halfway.
+ */
+export function installWebMCP(): void {
+  if (typeof document === "undefined" || !globalThis.isSecureContext || "modelContext" in document)
+    return;
+  const prototype = Document.prototype;
+  const defaultViewGetter = Object.getOwnPropertyDescriptor(prototype, "defaultView")!.get!;
+  const constructorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ModelContext");
+  if (
+    !Object.isExtensible(prototype) ||
+    (constructorDescriptor && !constructorDescriptor.configurable) ||
+    (!constructorDescriptor && !Object.isExtensible(globalThis))
+  ) {
+    throw new TypeError("Cannot install WebMCP on this realm");
+  }
+  Object.defineProperty(globalThis, "ModelContext", {
+    value: modelContextConstructor,
+    configurable: true,
+    writable: true,
+  });
+  // The native `defaultView` getter rejects a foreign receiver with "Illegal invocation", which
+  // is the brand check Web IDL requires of `get modelContext`. Its value is unused.
+  //
+  // A concise method, not a function declaration: attribute getters are not constructible and
+  // have no `prototype` property, and only a method gets both.
+  const { getModelContext } = {
+    getModelContext(this: Document): WebMCP.ModelContext {
+      defaultViewGetter.call(this);
+      let context = contexts.get(this);
+      if (!context) {
+        context = new ModelContextPolyfill(this);
+        contexts.set(this, context);
+      }
+      return context;
+    },
+  };
+  // A getter defined through a descriptor is named "get"; Web IDL requires "get modelContext".
+  Object.defineProperty(getModelContext, "name", { value: "get modelContext" });
+  Object.defineProperty(prototype, "modelContext", {
+    configurable: true,
+    enumerable: true,
+    get: getModelContext,
+  });
+}
