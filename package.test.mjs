@@ -64,9 +64,12 @@ try {
         return { count };
       },
     });
-    async function discover(context: WebMCP.ModelContext) {
-      const tools: WebMCP.RegisteredTool[] = await context.getTools();
-      return tools;
+    async function invoke(context: WebMCP.ModelContext) {
+      const [tool] = await context.getTools();
+      const result: string = await context.executeTool(tool, { count: 1 });
+      // @ts-expect-error legacy JSON-string input is not supported
+      await context.executeTool(tool, '{}');
+      return result;
     }
   `,
   );

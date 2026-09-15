@@ -37,7 +37,8 @@ await context.registerTool(
   { signal: registration.signal },
 );
 
-console.log(await context.getTools());
+const [tool] = await context.getTools();
+console.log(await context.executeTool(tool, {})); // {"title":"WebMCP demo"}
 
 // Remove the tool when it is no longer needed.
 registration.abort();
@@ -49,9 +50,9 @@ To install explicitly, import and call `installWebMCP` from `webmcp-polyfill`. I
 
 Tools stay in the current document. Cross-document tools, declarative forms, lifecycle window events, and browser agent integration aren't implemented. Nonempty `exposedTo` and `fromOrigins` options reject.
 
-This version supports registration, discovery, and `toolchange`. It does not invoke registered callbacks; `executeTool()` follows alongside [the types update](https://github.com/webmachinelearning/webmcp-types/pull/3).
+`executeTool()` accepts an object and returns a JSON-serialized result. Callbacks must validate their inputs; schema inference provides TypeScript checks only.
 
-The implementation follows [draft source `cc45efc`](https://github.com/webmachinelearning/webmcp/blob/cc45efcaf0/index.bs) and passes all 27 selected assertions of the [upstream WPT](https://github.com/web-platform-tests/wpt/tree/1a21db90adf8a264370ad806ed761f39e1d435a0/webmcp) at the pin, with no expected failures. [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) records the selection and what it excludes.
+The implementation follows [draft source `cc45efc`](https://github.com/webmachinelearning/webmcp/blob/cc45efcaf0/index.bs). Of the 56 selected assertions of the [upstream WPT](https://github.com/web-platform-tests/wpt/tree/1a21db90adf8a264370ad806ed761f39e1d435a0/webmcp) at the pin, 51 pass and five fail where the pinned tests disagree with the draft's `executeTool()` input and result rules. [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) records each one and what the selection excludes.
 
 The API tracks the draft. Breaking changes ship with notes: in minor releases while the version is 0.x, in majors after 1.0.
 

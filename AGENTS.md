@@ -1,8 +1,8 @@
 # Working on the polyfill
 
-This package implements document-local WebMCP registration and discovery. Use
-the official `webmcp-types` dependency without duplicating or augmenting its
-declarations. Execution is deferred to a separate change alongside types PR #3.
+This package implements the document-local imperative WebMCP draft. Use the
+official `webmcp-types` dependency; do not duplicate its declarations. Keep the
+temporary `executeTool` augmentation only until the upstream package ships it.
 No MCP server, transport, extension product, navigator aliases, or legacy API
 compatibility belongs here.
 

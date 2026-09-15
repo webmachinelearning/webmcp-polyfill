@@ -11,7 +11,7 @@ if (!root || !chrome)
 
 const revision = "1a21db90adf8a264370ad806ed761f39e1d435a0";
 // Pinned together with `revision` and `tests`; keep TESTING.md in sync.
-const EXPECTED_ASSERTIONS = 27;
+const EXPECTED_ASSERTIONS = 56;
 const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
 if (head.error) throw head.error;
 if (head.status !== 0 || head.stdout.trim() !== revision) {
@@ -23,8 +23,8 @@ if (clean.status !== 0) {
   throw new Error("WPT has tracked changes; restore the pinned sources before running conformance");
 }
 
-// Unmodified upstream registration/discovery tests. Execution and full IDL
-// coverage belong to the executeTool follow-up.
+// Unmodified upstream files. Draft disagreements are tracked by exact subtest
+// in wpt-metadata, never by patching tests or silently skipping failures.
 const tests = [
   "imperative/register_tool_name_validation.https.html",
   "imperative/register_tool_signal.https.html",
@@ -36,9 +36,14 @@ const tests = [
   "imperative/getTools-imperative-schema.https.html",
   "imperative/model_context.https.html",
   "imperative/non-secure.html",
+  "idlharness.https.window.html",
   "imperative/register-tool-title.https.html",
   "imperative/register_tool_with_empty_annotation.https.html",
   "imperative/getTools-imperative-annotations.https.html",
+  "imperative/executeTool-invalid-dictionary.https.html",
+  "imperative/executeTool-error-window-onerror.https.html",
+  "imperative/executeTool-unregister-resolution-race.https.html",
+  "imperative/object-arguments.https.html",
 ];
 const report = fileURLToPath(new URL("./wpt-results/report.json", import.meta.url));
 mkdirSync(dirname(report), { recursive: true });
@@ -70,6 +75,8 @@ const result = spawnSync(
     fileURLToPath(new URL("./dist/polyfill.js", import.meta.url)),
     "--manifest",
     resolve(root, "MANIFEST.json"),
+    "--metadata",
+    fileURLToPath(new URL("./wpt-metadata", import.meta.url)),
     "--log-mach=-",
     "--log-wptreport",
     report,

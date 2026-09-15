@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  testMatch: /(?:index|app)\.test\.ts$/,
+  testMatch: /(?:index|execute|app)\.test\.ts$/,
   forbidOnly: !!process.env.CI,
   fullyParallel: true,
   workers: 3,

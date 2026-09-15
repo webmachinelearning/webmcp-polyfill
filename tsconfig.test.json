@@ -4,6 +4,7 @@
   "files": [
     "index.test-d.ts",
     "index.test.ts",
+    "execute.test.ts",
     "app.test.ts",
     "native.test.ts",
     "playwright.config.ts"

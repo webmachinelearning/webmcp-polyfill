@@ -11,14 +11,15 @@ pnpm test
 pnpm test:package
 ```
 
-| Check               | What it runs                                                                                                                                        |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.test-d.ts`   | TypeScript against the built package declarations, including upstream schema inference                                                              |
-| `index.test.ts`     | Built bundle served over HTTP in Chromium (native WebMCP disabled), Firefox, and WebKit; coercion, metadata, events, registration abort, errors, detached documents |
-| `app.test.ts`       | A served application, real button interactions, discovery, unregistration, and reload                                                               |
-| `native.test.ts`    | Real native Chromium registration, then polyfill loading; context and getter identities must survive                                                |
-| `pnpm test:package` | Packed tarball installed into a fresh consumer, public type imports, SSR-safe entry points, and package contents                                    |
-| `pnpm test:wpt`     | Unmodified upstream registration/discovery WPT in real Chrome Canary, with native WebMCP disabled                                                   |
+| Check               | What it runs                                                                                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.test-d.ts`   | TypeScript against the built package declarations, including upstream schema inference                                                                         |
+| `index.test.ts`     | Built bundle served over HTTP in Chromium (native WebMCP disabled), Firefox, and WebKit; coercion, metadata, events, errors, detached documents                 |
+| `execute.test.ts`   | The same three engines: object input, JSON results, cancellation, concurrent calls, and dispatch-time failures                                                  |
+| `app.test.ts`       | A served application, real button interactions, callback side effects, invalid input, unregistration, and reload                                                |
+| `native.test.ts`    | Real native Chromium registration, then polyfill loading; context and getter identities must survive                                                            |
+| `pnpm test:package` | Packed tarball installed into a fresh consumer, public type imports, SSR-safe entry points, and package contents                                                |
+| `pnpm test:wpt`     | Unmodified upstream WPT and IDL in real Chrome Canary, with native WebMCP disabled                                                                              |
 
 The fixture server binds 127.0.0.1:8793 and sets the required `Origin-Agent-Cluster`
 header; Playwright never reuses an existing server, so free that port first.
@@ -46,39 +47,74 @@ WPT_ROOT=../wpt CHROME_BIN=/path/to/chrome-canary pnpm test:wpt
 ```
 
 `WPT_PYTHON` and `WPT_VENV` optionally select the interpreter and environment.
-The runner checks the revision, rejects tracked source changes, requires all 13 selected files
+The runner checks the revision, rejects tracked source changes, requires all 18 selected files
 to run exactly once, checks assertion counts, and retains `wpt-results/report.json`
 with browser and upstream revisions. Runner errors, unexpected failures, and
 unexpected passes fail the command, and nothing is retried.
 
-At this pin, **all 27 selected assertions pass**, with no expected failures.
+At this pin, 56 assertions run: **51 pass and five have explicit expected FAIL
+metadata**. All 22 IDL assertions pass. API shape coverage does not prove runtime
+defaults or complete conformance.
+
+### Known draft disagreements
+
+The [published draft](https://webmachinelearning.github.io/webmcp/#dom-modelcontext-executetool)
+accepts optional `any inputObject`, rejects non-objects, and has no `{}` default.
+It also JSON-serializes callback results, including strings. The pinned WPT
+expects a default object and raw string results in the following cases:
+
+| Upstream file                                       | Expected failures                                                                                            | Local coverage                                                                     |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `executeTool-invalid-dictionary.https.html`         | Missing tool invoked without input expects `UnknownError`, rather than the draft's earlier input `TypeError` | Descriptor validation and input errors                                             |
+| `executeTool-error-window-onerror.https.html`       | Both cases omit input and expect execution to start                                                          | Explicit object input, callback/serialization failures, and absence of page errors |
+| `executeTool-unregister-resolution-race.https.html` | Invocation omits input                                                                                       | Unregistration during an invocation and its successful result                      |
+| `object-arguments.https.html`                       | Expects an unquoted string result; also expects omitted input to become `{}`                                 | Array/object inputs, rejected primitive inputs, and JSON result serialization      |
+
+These are five assertions in four files, recorded individually in `wpt-metadata`.
+The pin, [1a21db9](https://github.com/web-platform-tests/wpt/commit/1a21db90adf8a264370ad806ed761f39e1d435a0),
+is the WPT export of the Chromium change for
+[spec PR #246](https://github.com/webmachinelearning/webmcp/pull/246) and
+[#251](https://github.com/webmachinelearning/webmcp/pull/251), and it rewrote all four of these
+files. The draft's input and result rules have not changed since #251 merged, so these are not
+stale tests awaiting an update: four of the assertions invoke `executeTool()` with no input,
+which the draft rejects with a `TypeError` before it looks the tool up, and `object-arguments`
+asserts an unquoted `"Success"` from a callback whose result the draft JSON-serializes. Re-read the live
+draft before changing any expectation. An expected failure can stop at its first assertion, so
+the local tests cover the behavior after that point.
+
+`webmcp-types` PR #3 and the augmentation in `index.ts` both declare `inputObject?: object`,
+which is narrower than the IDL's `any`: omitting the argument type-checks and then rejects at
+runtime, as the draft requires.
 
 ### Excluded coverage
 
-Execution tests and the full IDL harness are deferred with `executeTool()`.
-The IDL includes that method, so running the full shape suite against this
-registration/discovery subset would intentionally fail. Keep that exclusion
-explicit rather than adding expected failures for an API not yet included.
-
-Cross-document discovery, frame-tree routing, declarative forms, browser
-permissions integration, CSS states, navigation/BFCache, and lifecycle window
-events are also outside this initial implementation.
+Cross-document discovery/execution, frame-tree routing, navigation cancellation,
+declarative forms, browser permissions integration, CSS states, and lifecycle
+window events are outside this initial implementation. The pinned
+`executeTool-abort.https.html` is excluded rather than carried as expected
+failures: its second subtest waits forever on a `toolactivated` event that the
+draft still leaves [unspecified](https://github.com/webmachinelearning/webmcp/issues/146),
+so the file times out and its last three subtests never run at all. Expected-failure
+metadata cannot express that, and cancellation is exercised directly in all three
+engines instead.
+`exposedTo-invalid-origins.https.html` is excluded for the `exposedTo` divergence
+recorded below, not for cross-document routing.
 
 WPT's `--inject-script` modifies testharness pages; it does not install the bundle
 in `/common/blank.html` helper frames. Detached-frame WPT therefore cannot run
 unchanged in this lane. The local test serves an instrumented iframe, removes
-it, and checks registration, discovery, and exception realms.
+it, and checks all three operations and exception realms.
 
 ## Where to look when upstream changes
 
-| Source                                                                                                                                                                | Use                                                                                              |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| [Draft source and history](https://github.com/webmachinelearning/webmcp/commits/main/index.bs)                                                                        | Normative algorithms, Web IDL, open issues; compare with the revision below               |
-| [WPT webmcp](https://github.com/web-platform-tests/wpt/tree/master/webmcp) and [results](https://wpt.fyi/results/webmcp)                                              | Executable assertions and native cross-browser results; these results are not polyfill results   |
-| [WPT IDL](https://github.com/web-platform-tests/wpt/blob/master/interfaces/webmcp.idl)                                                                                | Generated interface snapshot; it can lag the published draft                                     |
-| [Official types](https://github.com/webmachinelearning/webmcp-types)                                                                                                  | Public declarations, schema inference, and pending API updates                                   |
-| [Blink script_tools](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/script_tools/)                                             | Chromium IDL, implementation, tests, and commit-linked bugs                                      |
-| [Gecko source search](https://searchfox.org/mozilla-central/search?q=ModelContext) and [Mozilla position](https://github.com/mozilla/standards-positions/issues/1412) | Locate Firefox implementation work and discussion; a position is not evidence of shipped support |
+| Source                                                                                                                                                                                                                                               | Use                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [Draft source and history](https://github.com/webmachinelearning/webmcp/commits/main/index.bs)                                                                                                                                                       | Normative algorithms, Web IDL, open issues; compare with the revision below               |
+| [WPT webmcp](https://github.com/web-platform-tests/wpt/tree/master/webmcp) and [results](https://wpt.fyi/results/webmcp)                                                                                                                             | Executable assertions and native cross-browser results; these results are not polyfill results   |
+| [WPT IDL](https://github.com/web-platform-tests/wpt/blob/master/interfaces/webmcp.idl)                                                                                                                                                               | Generated interface snapshot; it can lag the published draft                                     |
+| [Official types](https://github.com/webmachinelearning/webmcp-types)                                                                                                                                                                                 | Public declarations, schema inference, and pending API updates                                   |
+| [Blink script_tools](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/script_tools/)                                                                                                                            | Chromium IDL, implementation, tests, and commit-linked bugs                                      |
+| [Gecko source search](https://searchfox.org/mozilla-central/search?q=ModelContext) and [Mozilla position](https://github.com/mozilla/standards-positions/issues/1412)                                                                                | Locate Firefox implementation work and discussion; a position is not evidence of shipped support |
 
 Reproduce a disagreement before changing code or expectations, and record what
 changed in the draft, types, WPT, and browser implementation separately.
@@ -93,7 +129,10 @@ explicit `any`. Warnings fail the command, and `pnpm test` runs it before compil
 The implementation was compared with [draft source `cc45efc`](https://github.com/webmachinelearning/webmcp/blob/cc45efcaf0/index.bs).
 It uses timers to queue tasks; JavaScript cannot reproduce the browser's WebMCP
 task source, nor the draft's abort *algorithms*, which run before an abort event
-rather than as a listener.
+rather than as a listener. One consequence is observable: a signal aborted before
+the dispatch timer fires rejects the caller and never runs the callback, where the
+draft dispatches to the target document and then cancels through the callback's own
+signal.
 
 The runtime checks the `tools` Permissions Policy when the browser exposes it.
 No engine lists `tools` in `permissionsPolicy.features()` today, so that branch
@@ -109,6 +148,10 @@ draft would validate the origins and then resolve, since a document-local
 implementation has nowhere to expose a tool to; rejecting keeps the polyfill from
 implying cross-document support it does not have. Origins are validated first, so
 an untrustworthy one still fails with the `SecurityError` the draft requires.
+
+`webmcp-types@0.1.7` does not declare `executeTool()`. The method augmentation
+in `index.ts` is temporary; remove it when [types PR #3](https://github.com/webmachinelearning/webmcp-types/pull/3)
+is included in a release.
 
 To test types changes, keep `webmcp-types` beside this checkout and run
 `pnpm link ../webmcp-types`, then `pnpm typecheck`. Restore the published

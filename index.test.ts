@@ -18,6 +18,11 @@ test("every operation rejects when the server opts out of origin-keyed agent clu
       for (const operation of [
         () => context.getTools(),
         () => context.registerTool({ name: "x", description: "X", execute: () => null }),
+        () =>
+          context.executeTool(
+            { name: "x", title: "", description: "X", window, origin: location.origin },
+            {},
+          ),
       ]) {
         try {
           await operation();
@@ -29,7 +34,7 @@ test("every operation rejects when the server opts out of origin-keyed agent clu
       }
       return errors;
     }),
-  ).toEqual(["SecurityError", "SecurityError"]);
+  ).toEqual(["SecurityError", "SecurityError", "SecurityError"]);
 });
 
 test("only potentially trustworthy origins reach the cross-document refusal", async ({ page }) => {
@@ -250,6 +255,7 @@ test("operations on a real detached frame reject in the frame's realm", async ({
     document.body.append(iframe);
     await loaded;
     const context = iframe.contentDocument!.modelContext!;
+    const tool = (await context.getTools())[0];
     const FrameException = iframe.contentDocument!.defaultView!.DOMException;
     iframe.remove();
     const errors = [];
@@ -257,6 +263,7 @@ test("operations on a real detached frame reject in the frame's realm", async ({
       () => context.getTools(),
       () =>
         context.registerTool({ name: "detached", description: "Detached", execute: () => null }),
+      () => context.executeTool(tool, {}),
     ]) {
       try {
         await operation();
@@ -267,7 +274,7 @@ test("operations on a real detached frame reject in the frame's realm", async ({
     }
     return errors;
   });
-  expect(frame).toEqual(["InvalidStateError", "InvalidStateError"]);
+  expect(frame).toEqual(["InvalidStateError", "InvalidStateError", "InvalidStateError"]);
 });
 
 test("installs once, exposes only standard members, and keeps document identity", async ({
@@ -308,14 +315,14 @@ test("installs once, exposes only standard members, and keeps document identity"
       writable: descriptor.set !== undefined,
       alias: "modelContext" in navigator,
       testing: "modelContextTesting" in navigator,
-      lengths: [context.registerTool.length, context.getTools.length],
+      lengths: [context.registerTool.length, context.getTools.length, context.executeTool.length],
       constructionError,
       getterErrors,
     };
   });
   expect(result).toEqual({
     same: true,
-    members: ["getTools", "ontoolchange", "registerTool"],
+    members: ["executeTool", "getTools", "ontoolchange", "registerTool"],
     own: [],
     brand: "[object ModelContext]",
     instance: true,
@@ -324,7 +331,7 @@ test("installs once, exposes only standard members, and keeps document identity"
     writable: false,
     alias: false,
     testing: false,
-    lengths: [1, 0],
+    lengths: [1, 0, 1],
     constructionError: "TypeError",
     getterErrors: ["TypeError", "TypeError", "TypeError", "TypeError", "TypeError"],
   });
@@ -450,7 +457,7 @@ test("rejects invalid descriptors, duplicates and unserializable schemas", async
   expect(registered).toEqual(["valid"]);
 });
 
-test("coerces registration dictionary members", async ({ page }) => {
+test("uses dictionary coercion without retaining or binding the tool object", async ({ page }) => {
   await page.addScriptTag({ url: "/auto.js" });
   const result = await page.evaluate(async () => {
     "use strict";
@@ -460,7 +467,9 @@ test("coerces registration dictionary members", async ({ page }) => {
       title: "\ud800",
       description: true,
       annotations: { readOnlyHint: 1 },
-      execute: () => null,
+      execute() {
+        return this === undefined;
+      },
     };
     // @ts-expect-error Web IDL coerces the deliberately non-string fields.
     await context.registerTool(descriptor);
@@ -470,6 +479,7 @@ test("coerces registration dictionary members", async ({ page }) => {
       title: tool.title,
       description: tool.description,
       annotations: tool.annotations,
+      result: await context.executeTool(tool, {}),
     };
   });
   expect(result).toEqual({
@@ -477,6 +487,7 @@ test("coerces registration dictionary members", async ({ page }) => {
     title: "\ufffd",
     description: "true",
     annotations: { consequentialHint: false, readOnlyHint: true, untrustedContentHint: false },
+    result: "true",
   });
 });
 
@@ -574,7 +585,12 @@ test("validates origins and refuses cross-document exposure", async ({ page }) =
       }
       return errors;
     }),
-  ).toEqual(["SecurityError", "SecurityError", "NotSupportedError", "NotSupportedError"]);
+  ).toEqual([
+    "SecurityError",
+    "SecurityError",
+    "NotSupportedError",
+    "NotSupportedError",
+  ]);
 });
 
 test("inactive documents get their own context but cannot register tools", async ({ page }) => {
