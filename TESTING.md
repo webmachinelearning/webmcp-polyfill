@@ -11,26 +11,41 @@ pnpm test
 pnpm test:package
 ```
 
-| Check               | What it runs                                                                                                                                                   |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index.test-d.ts`   | TypeScript against the built package declarations, including upstream schema inference                                                                         |
-| `index.test.ts`     | Built bundle served over HTTP in Chromium (native WebMCP disabled), Firefox, and WebKit; coercion, metadata, events, errors, detached documents                 |
-| `execute.test.ts`   | The same three engines: object input, JSON results, cancellation, concurrent calls, and dispatch-time failures                                                  |
-| `app.test.ts`       | A served application, real button interactions, callback side effects, invalid input, unregistration, and reload                                                |
-| `native.test.ts`    | Real native Chromium registration, then polyfill loading; context and getter identities must survive                                                            |
-| `pnpm test:package` | Packed tarball installed into a fresh consumer, public type imports, SSR-safe entry points, and package contents                                                |
-| `pnpm test:wpt`     | Unmodified upstream WPT and IDL in real Chrome Canary, with native WebMCP disabled                                                                              |
+The Firefox extension project additionally requires a stock Firefox and
+[geckodriver](https://github.com/mozilla/geckodriver/releases). Put geckodriver
+on PATH, or set `GECKODRIVER` to its executable. Set `FIREFOX_BIN` when Firefox
+is not discoverable by geckodriver. CI installs both explicitly. No extension
+signing preference is disabled: geckodriver installs a temporary development
+add-on into a disposable profile.
+
+For a focused run, use `pnpm build && pnpm exec playwright test --project=extension-firefox`
+or `--project=extension-chromium`; every browser test loads the built bundle, so skipping the
+build tests the previous one. Missing prerequisites fail that project.
+
+| Check               | What it runs                                                                                                                                                    |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.test-d.ts`   | TypeScript against the built package declarations, including upstream schema inference                                                                          |
+| `index.test.ts`     | Built bundle served over HTTP in Chromium (native WebMCP disabled), Firefox, and WebKit; coercion, metadata, events, errors, detached documents                  |
+| `execute.test.ts`   | The same three engines: object input, JSON results, cancellation, concurrent calls, and dispatch-time failures                                                   |
+| `app.test.ts`       | A served application, real button interactions, callback side effects, invalid input, unregistration, and reload                                                 |
+| `native.test.ts`    | Real native Chromium registration, then polyfill loading; context and getter identities must survive                                                             |
+| `extension.test.ts` | Real MV3 extension in Chromium and stock Firefox: MAIN installation, isolated notifications, background scripting calls, page state, re-registration, reload, and an unmatched origin |
+| `pnpm test:package` | Packed tarball installed into a fresh consumer, public type imports, SSR-safe entry points, and package contents                                                 |
+| `pnpm test:wpt`     | Unmodified upstream WPT and IDL in real Chrome Canary, with native WebMCP disabled                                                                               |
 
 The fixture server binds 127.0.0.1:8793 and sets the required `Origin-Agent-Cluster`
 header; Playwright never reuses an existing server, so free that port first.
-Loopback HTTP is a secure context;
+Geckodriver picks its own loopback port. Loopback HTTP is a secure context;
 the WPT `non-secure.html` case supplies the nonsecure-origin check. The browser
 suite uses fresh contexts and real network responses, without route interception,
-fake timers, DOM shims, or mocked tool callbacks.
+fake timers, DOM shims, or mocked extension APIs. The extension fixture executes
+the integration guide's discovery/invocation example directly.
 
 Playwright retains failure traces and an HTML report in `playwright-report/`.
-Playwright drives its bundled Firefox for page tests. WebKit is additional engine
-coverage, not a claim that Safari itself was tested.
+Firefox extension runs attach the browser version, a page screenshot, and
+geckodriver logs. Page tests use Playwright's bundled Firefox. Extension tests use stock Firefox
+over Selenium, because Playwright loads extensions only in Chromium. WebKit is
+engine coverage, not a claim that Safari was tested.
 
 ## Run upstream WPT
 
@@ -115,6 +130,7 @@ it, and checks all three operations and exception realms.
 | [Official types](https://github.com/webmachinelearning/webmcp-types)                                                                                                                                                                                 | Public declarations, schema inference, and pending API updates                                   |
 | [Blink script_tools](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/script_tools/)                                                                                                                            | Chromium IDL, implementation, tests, and commit-linked bugs                                      |
 | [Gecko source search](https://searchfox.org/mozilla-central/search?q=ModelContext) and [Mozilla position](https://github.com/mozilla/standards-positions/issues/1412)                                                                                | Locate Firefox implementation work and discussion; a position is not evidence of shipped support |
+| [Firefox extension worlds](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/content_scripts) and [scripting](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/scripting/executeScript) | Browser extension integration and serialization boundaries                                       |
 
 Reproduce a disagreement before changing code or expectations, and record what
 changed in the draft, types, WPT, and browser implementation separately.

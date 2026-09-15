@@ -6,6 +6,7 @@
     "index.test.ts",
     "execute.test.ts",
     "app.test.ts",
+    "extension.test.ts",
     "native.test.ts",
     "playwright.config.ts"
   ]

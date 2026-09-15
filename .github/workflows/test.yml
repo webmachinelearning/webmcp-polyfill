@@ -26,7 +26,18 @@ jobs:
       - run: npm install --global pnpm@10.14.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - uses: browser-actions/setup-firefox@0bc507ddf224827e3b1af68e014d5e42ab93e795 # v1.7.2
+        id: firefox
+        with:
+          firefox-version: latest
+      # Pinned to the tip of this action's `latest` branch; it publishes no release tags.
+      - uses: browser-actions/setup-geckodriver@fac5b0424c584257f32cf12c5eb4ba86014c34f8
+        with:
+          geckodriver-version: 0.37.1
+          token: ${{ github.token }}
       - run: pnpm test
+        env:
+          FIREFOX_BIN: ${{ steps.firefox.outputs.firefox-path }}
       - run: pnpm test:package
       - uses: actions/upload-artifact@v7
         if: always()
@@ -63,7 +74,7 @@ jobs:
           python-version: "3.11"
       - run: npm install --global pnpm@10.14.0
       - run: pnpm install --frozen-lockfile
-      - uses: browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd
+      - uses: browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd # v2.1.2
         id: chrome
         with:
           chrome-version: canary
