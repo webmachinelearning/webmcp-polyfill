@@ -8,188 +8,117 @@ export type { WebMCP } from "webmcp-types";
 
 // Detached windows may stop exposing these bindings.
 const NativeDOMException = globalThis.DOMException;
-const windowGetter = Object.getOwnPropertyDescriptor(globalThis, "window")?.get;
+const getWindow = Object.getOwnPropertyDescriptor(globalThis, "window")?.get;
 
-interface Tool {
+interface StoredTool {
   metadata: Omit<WebMCP.RegisteredTool, "inputSchema">;
   // Snapshot at registration; parse a fresh copy for each discovery result.
-  schema?: string;
+  serializedSchema?: string;
   execute: WebMCP.ToolExecuteCallback<object>;
 }
 
-function isObject(value: unknown): value is object {
-  return (typeof value === "object" && value !== null) || typeof value === "function";
-}
-
-// https://webidl.spec.whatwg.org/#es-dictionary
-function dictionary(value: unknown): Record<PropertyKey, unknown> {
-  if (value == null) return {};
-  if (!isObject(value)) throw new TypeError("Expected a dictionary");
-  // SAFETY: the object check permits property reads; each member still needs conversion.
-  return value as Record<PropertyKey, unknown>;
-}
-
-function toolAnnotations(value: unknown): WebMCP.ToolAnnotations | undefined {
-  if (value === undefined) return undefined;
-  const annotations = dictionary(value);
-  return {
-    consequentialHint: Boolean(annotations.consequentialHint),
-    readOnlyHint: Boolean(annotations.readOnlyHint),
-    untrustedContentHint: Boolean(annotations.untrustedContentHint),
-  };
-}
-
-// https://webidl.spec.whatwg.org/#es-DOMString
-function domString(value: unknown): string {
-  if (typeof value === "symbol") throw new TypeError("Cannot convert a Symbol to a string");
-  return String(value);
-}
-
-function required(value: unknown, name: string): unknown {
-  if (value === undefined) throw new TypeError(`${name} is required`);
-  return value;
-}
-
-function serialize(value: unknown): string {
-  const result = JSON.stringify(value);
-  if (result === undefined) throw new TypeError("Value is not JSON-serializable");
-  return result;
-}
-
-function signalOption(value: unknown): AbortSignal | undefined {
-  // SAFETY: any() validates the native brand across realms before we use the signal.
-  // Composition also survives stopImmediatePropagation() on the original signal.
-  return value === undefined ? undefined : AbortSignal.any([value as AbortSignal]);
-}
-
-// https://webidl.spec.whatwg.org/#es-sequence
-function originSequence(value: unknown): string[] {
-  if (value === undefined) return [];
-  if (!isObject(value)) throw new TypeError("Origins must be a sequence");
-  const iterator: unknown = Reflect.get(value, Symbol.iterator);
-  if (typeof iterator !== "function") throw new TypeError("Origins must be a sequence");
-  // Web IDL gets the iterator method once and calls it with the original receiver.
-  return Array.from({ [Symbol.iterator]: () => Reflect.apply(iterator, value, []) }, (origin) =>
-    domString(origin).toWellFormed(),
-  );
-}
-
-// Validate before refusing cross-document support, preserving SecurityError precedence.
-// ponytail: scheme/host approximation; use native origin checks for full conformance.
-function rejectUnsupportedOrigins(origins: string[]): void {
-  for (const origin of origins) {
-    let url = URL.parse(origin);
-    if (!url) throw new NativeDOMException("Invalid origin", "SecurityError");
-    // blob: URLs inherit their origin's scheme and host.
-    if (url.origin !== "null") url = new URL(url.origin);
-    const local =
-      url.hostname === "[::1]" ||
-      // URL canonicalizes numeric hosts; exclude domains such as 127.example.test.
-      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname) ||
-      url.hostname === "localhost" ||
-      url.hostname === "localhost." ||
-      url.hostname.endsWith(".localhost") ||
-      url.hostname.endsWith(".localhost.");
-    if (
-      !["https:", "wss:", "file:"].includes(url.protocol) &&
-      !(["http:", "ws:"].includes(url.protocol) && local)
-    ) {
-      throw new NativeDOMException("Origin is not potentially trustworthy", "SecurityError");
-    }
+/**
+ * Install document-local WebMCP in the current window.
+ *
+ * Does nothing outside a secure browser context or when `document.modelContext`
+ * already exists, including partial native implementations. Call before registering
+ * tools in each frame; repeated calls preserve existing contexts and registrations.
+ *
+ * @throws {TypeError} If the window or Document prototype prevents installation.
+ * @example
+ * import { installWebMCP } from "webmcp-polyfill";
+ * installWebMCP();
+ *
+ * @see https://webmachinelearning.github.io/webmcp/#document-extension
+ * @see https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md
+ */
+export function installWebMCP(): void {
+  if (typeof document === "undefined" || !globalThis.isSecureContext) {
+    return;
   }
-  if (origins.length) {
-    throw new NativeDOMException("Cross-document tools require native WebMCP", "NotSupportedError");
+  if ("modelContext" in document) {
+    return;
   }
-}
 
-function activeView(owner: Document): Window {
-  const view = owner.defaultView;
-  if (!view || view.document !== owner || (view.frameElement && !view.frameElement.isConnected)) {
-    throw new NativeDOMException("The document is not fully active", "InvalidStateError");
-  }
-  if (view.originAgentCluster === false && view.location.protocol !== "file:") {
-    throw new NativeDOMException("An origin-keyed agent cluster is required", "SecurityError");
-  }
-  // Query the policy only if the browser recognizes the tools feature.
-  const policy =
-    ("permissionsPolicy" in owner ? owner.permissionsPolicy : undefined) ??
-    ("featurePolicy" in owner ? owner.featurePolicy : undefined);
+  const documentPrototype = Document.prototype;
+  const getDefaultView = Object.getOwnPropertyDescriptor(documentPrototype, "defaultView")!.get!;
+  const constructorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ModelContext");
   if (
-    isObject(policy) &&
-    "features" in policy &&
-    "allowsFeature" in policy &&
-    typeof policy.features === "function" &&
-    typeof policy.allowsFeature === "function" &&
-    policy.features().includes("tools")
+    !Object.isExtensible(documentPrototype) ||
+    (constructorDescriptor && !constructorDescriptor.configurable) ||
+    (!constructorDescriptor && !Object.isExtensible(globalThis))
   ) {
-    if (policy.allowsFeature("tools")) return view;
-    throw new NativeDOMException("WebMCP is disabled by Permissions Policy", "NotAllowedError");
+    throw new TypeError("Cannot install WebMCP on this realm");
   }
-  // ponytail: same-origin fallback; native policy support is needed to honor allowlists.
-  try {
-    void view.parent.document;
-  } catch {
-    throw new NativeDOMException(
-      "Cross-origin frames require native Permissions Policy",
-      "NotAllowedError",
-    );
-  }
-  return view;
-}
 
-// ponytail: timer tasks; exact WebMCP scheduling and navigation cleanup need native support.
-function queueTask(callback: () => void): void {
-  setTimeout(callback, 0);
+  Object.defineProperty(globalThis, "ModelContext", {
+    value: modelContextConstructor,
+    configurable: true,
+    writable: true,
+  });
+
+  // A method is non-constructible; defaultView supplies the native Document brand check.
+  const { getModelContext } = {
+    getModelContext(this: Document): WebMCP.ModelContext {
+      getDefaultView.call(this);
+      let context = contexts.get(this);
+      if (!context) {
+        context = new ModelContextPolyfill(this);
+        contexts.set(this, context);
+      }
+      return context;
+    },
+  };
+  Object.defineProperty(getModelContext, "name", { value: "get modelContext" });
+  Object.defineProperty(documentPrototype, "modelContext", {
+    configurable: true,
+    enumerable: true,
+    get: getModelContext,
+  });
 }
 
 // Default parameters preserve Web IDL's required-argument counts in function.length.
 class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
-  readonly #owner: Document;
-  readonly #tools = new Map<string, Tool>();
-  #handler: WebMCP.ModelContext["ontoolchange"] = null;
-  readonly #listener = (event: Event): void => {
-    this.#handler?.call(this, event);
+  readonly #document: Document;
+  readonly #tools = new Map<string, StoredTool>();
+  #toolchangeHandler: WebMCP.ModelContext["ontoolchange"] = null;
+  readonly #toolchangeListener = (event: Event): void => {
+    this.#toolchangeHandler?.call(this, event);
   };
 
   constructor(owner: Document) {
     super();
-    this.#owner = owner;
+    this.#document = owner;
   }
 
   get ontoolchange(): WebMCP.ModelContext["ontoolchange"] {
-    return this.#handler;
+    return this.#toolchangeHandler;
   }
 
   set ontoolchange(handler: WebMCP.ModelContext["ontoolchange"]) {
-    const next = typeof handler === "function" ? handler : null;
+    const nextHandler = typeof handler === "function" ? handler : null;
     // Replacing a handler preserves its listener position; clearing it removes that position.
-    if (!this.#handler && next) this.addEventListener("toolchange", this.#listener);
-    if (this.#handler && !next) this.removeEventListener("toolchange", this.#listener);
-    this.#handler = next;
+    if (!this.#toolchangeHandler && nextHandler) {
+      this.addEventListener("toolchange", this.#toolchangeListener);
+    }
+    if (this.#toolchangeHandler && !nextHandler) {
+      this.removeEventListener("toolchange", this.#toolchangeListener);
+    }
+    this.#toolchangeHandler = nextHandler;
   }
 
   async registerTool(
     tool: object,
     options: WebMCP.ModelContextRegisterToolOptions = {},
   ): Promise<void> {
-    const descriptor = dictionary(tool);
-    const annotations = toolAnnotations(descriptor.annotations);
-    const description = domString(required(descriptor.description, "description"));
-    const callback = required(descriptor.execute, "execute");
-    if (typeof callback !== "function") throw new TypeError("execute must be a function");
-    // SAFETY: callability is checked above; inputs and results are converted at invocation.
-    const execute = callback as WebMCP.ToolExecuteCallback<object>;
-    const inputSchema = descriptor.inputSchema;
-    if (inputSchema !== undefined && !isObject(inputSchema))
-      throw new TypeError("inputSchema must be an object");
-    const name = domString(required(descriptor.name, "name"));
-    const rawTitle = descriptor.title;
-    const title = rawTitle === undefined ? "" : domString(rawTitle).toWellFormed();
-    const settings = dictionary(options);
-    const exposedTo = originSequence(settings.exposedTo);
-    const signal = signalOption(settings.signal);
+    const { name, title, description, annotations, inputSchema, execute } =
+      readToolDefinition(tool);
+    const settings = readDictionary(options);
+    const exposedTo = readOriginSequence(settings.exposedTo);
+    const registrationSignal = readAbortSignal(settings.signal);
 
-    const view = activeView(this.#owner);
+    const ownerWindow = requireActiveWindow(this.#document);
+
     // Duplicate, then name, then description: the draft's order.
     if (this.#tools.has(name)) {
       throw new NativeDOMException(
@@ -206,29 +135,39 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     if (!description) {
       throw new NativeDOMException("A tool description cannot be empty", "InvalidStateError");
     }
-    const schema = inputSchema === undefined ? undefined : serialize(inputSchema);
-    signal?.throwIfAborted();
+    const serializedSchema = inputSchema === undefined ? undefined : serializeJSON(inputSchema);
+    registrationSignal?.throwIfAborted();
     rejectUnsupportedOrigins(exposedTo);
 
-    const entry: Tool = {
-      metadata: { name, title, description, window: view, origin: view.origin },
-      schema,
+    const storedTool: StoredTool = {
+      metadata: {
+        name,
+        title,
+        description,
+        window: ownerWindow,
+        origin: ownerWindow.origin,
+      },
+      serializedSchema,
       execute,
     };
-    if (annotations !== undefined) entry.metadata.annotations = annotations;
+    if (annotations !== undefined) {
+      storedTool.metadata.annotations = annotations;
+    }
+
     return new Promise<void>((resolve, reject) => {
       // Abort unregisters the tool and also rejects any pending registration.
-      signal?.addEventListener(
+      registrationSignal?.addEventListener(
         "abort",
         () => {
           this.#tools.delete(name);
-          queueTask(() => this.dispatchEvent(new Event("toolchange")));
-          reject(signal.reason);
+          this.#queueToolChange();
+          reject(registrationSignal.reason);
         },
         { once: true },
       );
-      this.#tools.set(name, entry);
-      queueTask(() => this.dispatchEvent(new Event("toolchange")));
+
+      this.#tools.set(name, storedTool);
+      this.#queueToolChange();
       queueTask(resolve);
     });
   }
@@ -236,25 +175,31 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
   async getTools(
     options: WebMCP.ModelContextGetToolOptions = {},
   ): Promise<WebMCP.RegisteredTool[]> {
-    const fromOrigins = originSequence(dictionary(options).fromOrigins);
-    activeView(this.#owner);
+    const settings = readDictionary(options);
+    const fromOrigins = readOriginSequence(settings.fromOrigins);
+
+    requireActiveWindow(this.#document);
     rejectUnsupportedOrigins(fromOrigins);
-    const tools = [...this.#tools.values()]
-      // Web IDL creates a dictionary's members in lexicographical order.
-      .map(
-        ({ metadata, schema }): WebMCP.RegisteredTool => ({
-          ...(metadata.annotations && { annotations: { ...metadata.annotations } }),
-          description: metadata.description,
-          ...(schema !== undefined && { inputSchema: JSON.parse(schema) as object }),
-          name: metadata.name,
-          origin: metadata.origin,
-          title: metadata.title,
-          window: metadata.window,
-        }),
-      )
-      // Code-unit order, not locale order.
-      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    return new Promise((resolve) => queueTask(() => resolve(tools)));
+
+    const tools: WebMCP.RegisteredTool[] = [];
+    for (const storedTool of this.#tools.values()) {
+      tools.push(copyToolMetadata(storedTool));
+    }
+
+    // Compare code units; localeCompare() would change the draft's sort order.
+    tools.sort((left, right) => {
+      if (left.name < right.name) {
+        return -1;
+      }
+      if (left.name > right.name) {
+        return 1;
+      }
+      return 0;
+    });
+
+    return new Promise((resolve) => {
+      queueTask(() => resolve(tools));
+    });
   }
 
   async executeTool(
@@ -262,90 +207,119 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     inputObject: object | undefined = undefined,
     options: WebMCP.ModelContextExecuteToolOptions = {},
   ): Promise<string> {
-    // Web IDL conversion reads every member in order, including fields unused by execution.
-    const descriptor = dictionary(tool);
-    toolAnnotations(descriptor.annotations);
-    domString(required(descriptor.description, "description"));
-    const inputSchema = descriptor.inputSchema;
-    if (inputSchema !== undefined && !isObject(inputSchema))
-      throw new TypeError("inputSchema must be an object");
-    const name = domString(required(descriptor.name, "name"));
-    const origin = domString(required(descriptor.origin, "origin")).toWellFormed();
-    const title = descriptor.title;
-    if (title !== undefined) domString(title);
-    const target = required(descriptor.window, "window");
-    if (!isObject(target)) throw new TypeError("window must be a Window");
-    // The native getter checks the Window brand across realms.
-    windowGetter!.call(target);
-    const signal = signalOption(dictionary(options).signal);
-    activeView(this.#owner);
-    const expectedOrigin = URL.parse(origin)?.origin;
+    const target = readExecutionTarget(tool);
+    const settings = readDictionary(options);
+    const callerSignal = readAbortSignal(settings.signal);
+
+    requireActiveWindow(this.#document);
+    const expectedOrigin = URL.parse(target.origin)?.origin;
     if (!expectedOrigin || expectedOrigin === "null") {
       throw new NativeDOMException("Invalid or opaque origin", "NotSupportedError");
     }
-    if (!isObject(inputObject)) throw new TypeError("inputObject must be an object");
-    const input = serialize(inputObject);
-    signal?.throwIfAborted();
-    if (target !== this.#owner.defaultView) {
+    if (!isObject(inputObject)) {
+      throw new TypeError("inputObject must be an object");
+    }
+
+    const serializedInput = serializeJSON(inputObject);
+    callerSignal?.throwIfAborted();
+    if (target.window !== this.#document.defaultView) {
       // Cross-document routing is unsupported; dispatch failures use UnknownError.
       throw new NativeDOMException("Tool execution failed", "UnknownError");
     }
 
     return new Promise<string>((resolve, reject) => {
-      const controller = new AbortController();
-      let settled = false;
-      let callbackSettled = false;
-      const claimSettlement = (): boolean => {
-        if (settled) return false;
-        settled = true;
-        signal?.removeEventListener("abort", abort);
+      const callbackController = new AbortController();
+      // Cancellation can arrive after the callback finishes but before its result is delivered.
+      let callerSettled = false;
+      let callbackFinished = false;
+
+      const settleCaller = (): boolean => {
+        if (callerSettled) {
+          return false;
+        }
+        callerSettled = true;
+        callerSignal?.removeEventListener("abort", onCallerAbort);
         return true;
       };
-      const abort = (): void => {
-        if (!claimSettlement()) return;
-        reject(signal!.reason);
+
+      const onCallerAbort = (): void => {
+        if (!settleCaller()) {
+          return;
+        }
+        reject(callerSignal!.reason);
+
         // Reject the caller first; the running callback receives a default AbortError.
         queueTask(() => {
-          if (!callbackSettled) controller.abort();
+          if (!callbackFinished) {
+            callbackController.abort();
+          }
         });
       };
-      const fail = (): void => {
-        callbackSettled = true;
+
+      const rejectExecution = (): void => {
+        callbackFinished = true;
         queueTask(() => {
-          if (claimSettlement())
-            reject(new NativeDOMException("Tool execution failed", "UnknownError"));
+          if (!settleCaller()) {
+            return;
+          }
+          reject(new NativeDOMException("Tool execution failed", "UnknownError"));
         });
       };
-      const complete = (value: unknown): void => {
-        callbackSettled = true;
-        // Checked before serializing: a cancelled call must not run the author's toJSON.
-        if (settled) return;
+
+      const completeExecution = (value: unknown): void => {
+        callbackFinished = true;
+        // A cancelled call must not run the author's toJSON during serialization.
+        if (callerSettled) {
+          return;
+        }
+
         try {
-          const result = serialize(value);
+          const serializedResult = serializeJSON(value);
           queueTask(() => {
-            if (claimSettlement()) resolve(result);
+            if (settleCaller()) {
+              resolve(serializedResult);
+            }
           });
         } catch {
-          fail();
+          rejectExecution();
         }
       };
-      signal?.addEventListener("abort", abort, { once: true });
-      queueTask(() => {
-        if (settled) return;
-        try {
-          // Dispatch and callback failures share the draft's UnknownError.
-          const view = activeView(this.#owner);
-          const entry = this.#tools.get(name);
-          if (!entry || expectedOrigin !== view.origin) throw new Error();
-          const args: unknown = JSON.parse(input);
-          if (!isObject(args)) throw new Error();
-          const { execute } = entry;
-          Promise.resolve(execute(args, { signal: controller.signal })).then(complete, fail);
-        } catch {
-          fail();
+
+      const dispatchTool = (): void => {
+        if (callerSettled) {
+          return;
         }
-      });
+
+        try {
+          const ownerWindow = requireActiveWindow(this.#document);
+          const storedTool = this.#tools.get(target.name);
+          if (!storedTool || expectedOrigin !== ownerWindow.origin) {
+            rejectExecution();
+            return;
+          }
+
+          const input: unknown = JSON.parse(serializedInput);
+          if (!isObject(input)) {
+            rejectExecution();
+            return;
+          }
+
+          // The callback runs without the registration object as its receiver.
+          const execute = storedTool.execute;
+          const callbackResult = execute(input, { signal: callbackController.signal });
+          Promise.resolve(callbackResult).then(completeExecution, rejectExecution);
+        } catch {
+          rejectExecution();
+        }
+      };
+
+      callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
+      queueTask(dispatchTool);
     });
+  }
+
+  #queueToolChange(): void {
+    queueTask(() => this.dispatchEvent(new Event("toolchange")));
   }
 }
 
@@ -371,55 +345,238 @@ Object.defineProperties(ModelContextPolyfill.prototype, {
   ontoolchange: { enumerable: true },
 });
 
-/**
- * Install document-local WebMCP in the current window.
- *
- * Does nothing outside a secure browser context or when `document.modelContext`
- * already exists, including partial native implementations. Call before registering
- * tools in each frame; repeated calls preserve existing contexts and registrations.
- *
- * @throws {TypeError} If the window or Document prototype prevents installation.
- * @example
- * import { installWebMCP } from "webmcp-polyfill";
- * installWebMCP();
- *
- * @see https://webmachinelearning.github.io/webmcp/#document-extension
- * @see https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md
- */
-export function installWebMCP(): void {
-  if (typeof document === "undefined" || !globalThis.isSecureContext || "modelContext" in document)
-    return;
-  const prototype = Document.prototype;
-  const defaultViewGetter = Object.getOwnPropertyDescriptor(prototype, "defaultView")!.get!;
-  const constructorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "ModelContext");
-  if (
-    !Object.isExtensible(prototype) ||
-    (constructorDescriptor && !constructorDescriptor.configurable) ||
-    (!constructorDescriptor && !Object.isExtensible(globalThis))
-  ) {
-    throw new TypeError("Cannot install WebMCP on this realm");
+// Web IDL reads and converts dictionary members in lexicographical order.
+function readToolDefinition(value: unknown) {
+  const descriptor = readDictionary(value);
+  const annotations = readAnnotations(descriptor.annotations);
+  const description = toDOMString(requireMember(descriptor.description, "description"));
+  const callback = requireMember(descriptor.execute, "execute");
+  if (typeof callback !== "function") {
+    throw new TypeError("execute must be a function");
   }
-  Object.defineProperty(globalThis, "ModelContext", {
-    value: modelContextConstructor,
-    configurable: true,
-    writable: true,
-  });
-  // A method is non-constructible; defaultView supplies the native Document brand check.
-  const { getModelContext } = {
-    getModelContext(this: Document): WebMCP.ModelContext {
-      defaultViewGetter.call(this);
-      let context = contexts.get(this);
-      if (!context) {
-        context = new ModelContextPolyfill(this);
-        contexts.set(this, context);
-      }
-      return context;
+  // SAFETY: callability is checked above; inputs and results are converted at invocation.
+  const execute = callback as WebMCP.ToolExecuteCallback<object>;
+  const inputSchema = readInputSchema(descriptor.inputSchema);
+  const name = toDOMString(requireMember(descriptor.name, "name"));
+  const rawTitle = descriptor.title;
+  const title = rawTitle === undefined ? "" : toDOMString(rawTitle).toWellFormed();
+
+  return { name, title, description, annotations, inputSchema, execute };
+}
+
+// Convert the whole RegisteredTool dictionary, even members not used for dispatch.
+function readExecutionTarget(value: unknown) {
+  const descriptor = readDictionary(value);
+  readAnnotations(descriptor.annotations);
+  toDOMString(requireMember(descriptor.description, "description"));
+  readInputSchema(descriptor.inputSchema);
+  const name = toDOMString(requireMember(descriptor.name, "name"));
+  const origin = toDOMString(requireMember(descriptor.origin, "origin")).toWellFormed();
+  const title = descriptor.title;
+  if (title !== undefined) {
+    toDOMString(title);
+  }
+  const targetWindow = requireMember(descriptor.window, "window");
+  if (!isObject(targetWindow)) {
+    throw new TypeError("window must be a Window");
+  }
+  // The native getter checks the Window brand across realms without changing identity.
+  getWindow!.call(targetWindow);
+
+  return { name, origin, window: targetWindow };
+}
+
+function readInputSchema(value: unknown): object | undefined {
+  if (value !== undefined && !isObject(value)) {
+    throw new TypeError("inputSchema must be an object");
+  }
+  return value;
+}
+
+function copyToolMetadata({ metadata, serializedSchema }: StoredTool): WebMCP.RegisteredTool {
+  let inputSchema: object | undefined;
+  if (serializedSchema !== undefined) {
+    // The draft returns parsed JSON unchanged; RegisteredTool declares it as an object.
+    inputSchema = JSON.parse(serializedSchema) as object;
+  }
+
+  // Insert members in Web IDL order, then omit absent optional members.
+  const tool: WebMCP.RegisteredTool = {
+    annotations: metadata.annotations ? { ...metadata.annotations } : undefined,
+    description: metadata.description,
+    inputSchema,
+    name: metadata.name,
+    origin: metadata.origin,
+    title: metadata.title,
+    window: metadata.window,
+  };
+
+  if (tool.annotations === undefined) {
+    delete tool.annotations;
+  }
+  if (tool.inputSchema === undefined) {
+    delete tool.inputSchema;
+  }
+  return tool;
+}
+
+function isObject(value: unknown): value is object {
+  return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
+// https://webidl.spec.whatwg.org/#es-dictionary
+function readDictionary(value: unknown): Record<PropertyKey, unknown> {
+  if (value == null) {
+    return {};
+  }
+  if (!isObject(value)) {
+    throw new TypeError("Expected a dictionary");
+  }
+  // SAFETY: the object check permits property reads; each member still needs conversion.
+  return value as Record<PropertyKey, unknown>;
+}
+
+function readAnnotations(value: unknown): WebMCP.ToolAnnotations | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const annotations = readDictionary(value);
+  return {
+    consequentialHint: Boolean(annotations.consequentialHint),
+    readOnlyHint: Boolean(annotations.readOnlyHint),
+    untrustedContentHint: Boolean(annotations.untrustedContentHint),
+  };
+}
+
+// https://webidl.spec.whatwg.org/#es-DOMString
+function toDOMString(value: unknown): string {
+  if (typeof value === "symbol") {
+    throw new TypeError("Cannot convert a Symbol to a string");
+  }
+  return String(value);
+}
+
+function requireMember(value: unknown, name: string): unknown {
+  if (value === undefined) {
+    throw new TypeError(`${name} is required`);
+  }
+  return value;
+}
+
+function serializeJSON(value: unknown): string {
+  const result = JSON.stringify(value);
+  if (result === undefined) {
+    throw new TypeError("Value is not JSON-serializable");
+  }
+  return result;
+}
+
+function readAbortSignal(value: unknown): AbortSignal | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  // SAFETY: any() validates the native brand across realms before we use the signal.
+  // Composition also survives stopImmediatePropagation() on the original signal.
+  return AbortSignal.any([value as AbortSignal]);
+}
+
+// https://webidl.spec.whatwg.org/#es-sequence
+function readOriginSequence(value: unknown): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!isObject(value)) {
+    throw new TypeError("Origins must be a sequence");
+  }
+  const getIterator: unknown = Reflect.get(value, Symbol.iterator);
+  if (typeof getIterator !== "function") {
+    throw new TypeError("Origins must be a sequence");
+  }
+  // Web IDL gets the iterator method once and calls it with the original receiver.
+  const iterable = {
+    [Symbol.iterator]() {
+      return Reflect.apply(getIterator, value, []);
     },
   };
-  Object.defineProperty(getModelContext, "name", { value: "get modelContext" });
-  Object.defineProperty(prototype, "modelContext", {
-    configurable: true,
-    enumerable: true,
-    get: getModelContext,
-  });
+  return Array.from(iterable, (origin) => toDOMString(origin).toWellFormed());
+}
+
+// Validate before refusing cross-document support, preserving SecurityError precedence.
+// ponytail: scheme/host approximation; use native origin checks for full conformance.
+function rejectUnsupportedOrigins(origins: string[]): void {
+  for (const origin of origins) {
+    let url = URL.parse(origin);
+    if (!url) {
+      throw new NativeDOMException("Invalid origin", "SecurityError");
+    }
+    // blob: URLs inherit their origin's scheme and host.
+    if (url.origin !== "null") {
+      url = new URL(url.origin);
+    }
+    const isLoopback =
+      url.hostname === "[::1]" ||
+      // URL canonicalizes numeric hosts; exclude domains such as 127.example.test.
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname);
+    const isLocalhost =
+      url.hostname === "localhost" ||
+      url.hostname === "localhost." ||
+      url.hostname.endsWith(".localhost") ||
+      url.hostname.endsWith(".localhost.");
+    const isSecureScheme = ["https:", "wss:", "file:"].includes(url.protocol);
+    const isLocalHttp = ["http:", "ws:"].includes(url.protocol) && (isLoopback || isLocalhost);
+
+    if (!isSecureScheme && !isLocalHttp) {
+      throw new NativeDOMException("Origin is not potentially trustworthy", "SecurityError");
+    }
+  }
+  if (origins.length) {
+    throw new NativeDOMException("Cross-document tools require native WebMCP", "NotSupportedError");
+  }
+}
+
+function requireActiveWindow(owner: Document): Window {
+  const view = owner.defaultView;
+  if (!view || view.document !== owner || (view.frameElement && !view.frameElement.isConnected)) {
+    throw new NativeDOMException("The document is not fully active", "InvalidStateError");
+  }
+  if (view.originAgentCluster === false && view.location.protocol !== "file:") {
+    throw new NativeDOMException("An origin-keyed agent cluster is required", "SecurityError");
+  }
+
+  requireToolsPermission(owner, view);
+  return view;
+}
+
+function requireToolsPermission(owner: Document, view: Window): void {
+  // Query the policy only if the browser recognizes the tools feature.
+  const policy =
+    ("permissionsPolicy" in owner ? owner.permissionsPolicy : undefined) ??
+    ("featurePolicy" in owner ? owner.featurePolicy : undefined);
+  if (
+    isObject(policy) &&
+    "features" in policy &&
+    "allowsFeature" in policy &&
+    typeof policy.features === "function" &&
+    typeof policy.allowsFeature === "function" &&
+    policy.features().includes("tools")
+  ) {
+    if (!policy.allowsFeature("tools")) {
+      throw new NativeDOMException("WebMCP is disabled by Permissions Policy", "NotAllowedError");
+    }
+    return;
+  }
+  // ponytail: same-origin fallback; native policy support is needed to honor allowlists.
+  try {
+    void view.parent.document;
+  } catch {
+    throw new NativeDOMException(
+      "Cross-origin frames require native Permissions Policy",
+      "NotAllowedError",
+    );
+  }
+}
+
+// ponytail: timer tasks; exact WebMCP scheduling and navigation cleanup need native support.
+function queueTask(callback: () => void): void {
+  setTimeout(callback, 0);
 }

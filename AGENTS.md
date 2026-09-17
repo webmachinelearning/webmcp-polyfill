@@ -35,6 +35,10 @@ unmodified and do not claim full conformance.
 
 ## Code
 
+Favor a clear reading order over minimum line count. Use braces, name intermediate
+values by their role, and keep argument conversion separate from tool operations.
+Put the public entry point and operations before their lower-level helpers.
+
 Web IDL conversion accepts unknown values and broad objects, and feature
 detection needs runtime checks. Do not narrow either one to satisfy a lint rule.
 Keep casts at conversion boundaries, state the invariant each one checks, and use
