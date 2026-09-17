@@ -13,20 +13,15 @@ test("ignores late results after cancellation, including serialization side effe
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
-      let entered!: () => void;
-      const started = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      let finish!: (value: object) => void;
+      const { promise: started, resolve: entered } = Promise.withResolvers<void>();
+      const { promise: completion, resolve: finish } = Promise.withResolvers<object>();
       let serialized = false;
       await context.registerTool({
         name: "late",
         description: "Late",
         execute() {
           entered();
-          return new Promise<object>((resolve) => {
-            finish = resolve;
-          });
+          return completion;
         },
       });
       const [tool] = await context.getTools();
@@ -55,10 +50,7 @@ test("concurrent calls to the same tool have independent cancellation", async ({
     await page.evaluate(async () => {
       const context = document.modelContext!;
       const signals: AbortSignal[] = [];
-      let start!: () => void;
-      const bothStarted = new Promise<void>((resolve) => {
-        start = resolve;
-      });
+      const { promise: bothStarted, resolve: start } = Promise.withResolvers<void>();
       let finish!: (value: object) => void;
       await context.registerTool({
         name: "concurrent",
@@ -207,14 +199,8 @@ test("cancels the caller immediately and sends a default AbortError to the callb
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
-      let entered!: () => void;
-      const started = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      let observed!: (reason: string) => void;
-      const callbackAborted = new Promise<string>((resolve) => {
-        observed = resolve;
-      });
+      const { promise: started, resolve: entered } = Promise.withResolvers<void>();
+      const { promise: callbackAborted, resolve: observed } = Promise.withResolvers<string>();
       await context.registerTool({
         name: "pending",
         description: "Pending",
@@ -251,11 +237,8 @@ test("unregistration leaves an already-running invocation alive", async ({ page 
     await page.evaluate(async () => {
       const context = document.modelContext!;
       const registration = new AbortController();
-      let entered!: () => void;
-      const started = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      let complete!: (value: string) => void;
+      const { promise: started, resolve: entered } = Promise.withResolvers<void>();
+      const { promise: completion, resolve: complete } = Promise.withResolvers<string>();
       let callbackSignal!: AbortSignal;
       await context.registerTool(
         {
@@ -264,9 +247,7 @@ test("unregistration leaves an already-running invocation alive", async ({ page 
           execute(_input, { signal }) {
             callbackSignal = signal;
             entered();
-            return new Promise<string>((resolve) => {
-              complete = resolve;
-            });
+            return completion;
           },
         },
         { signal: registration.signal },
@@ -282,8 +263,7 @@ test("unregistration leaves an already-running invocation alive", async ({ page 
   ).toEqual({ count: 0, aborted: false, result: '"finished"' });
 });
 
-// A polyfill divergence, not a draft requirement: the draft dispatches to the target
-// document and cancels through the callback's own signal. See TESTING.md.
+// Polyfill scheduling limitation; see TESTING.md.
 test("aborting before the dispatch task rejects without starting the callback", async ({
   page,
 }) => {
@@ -412,7 +392,6 @@ test("execution converts every descriptor member before invoking the tool", asyn
   });
 });
 
-
 test("a tool belonging to another window cannot be executed", async ({ page }) => {
   await page.addScriptTag({ url: "/auto.js" });
   expect(
@@ -437,7 +416,9 @@ test("a tool belonging to another window cannot be executed", async ({ page }) =
   ).toBe("UnknownError");
 });
 
-test("descriptor origins are parsed, and a mismatch fails like a missing tool", async ({ page }) => {
+test("descriptor origins are parsed, and a mismatch fails like a missing tool", async ({
+  page,
+}) => {
   await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {

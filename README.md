@@ -4,7 +4,7 @@ A polyfill for [WebMCP](https://webmachinelearning.github.io/webmcp/), with type
 
 ## Build
 
-This package is under review. To try it locally, build this checkout with Node.js 24 and pnpm:
+This package is in development. Build this checkout with Node.js 24 and pnpm:
 
 ```sh
 pnpm install
@@ -15,7 +15,7 @@ Then install the checkout in your app with `pnpm add /path/to/webmcp-polyfill`. 
 
 ## Usage
 
-Serve your page over HTTPS with the `Origin-Agent-Cluster: ?1` response header. Localhost HTTP also works for development.
+Serve your page over HTTPS, or localhost HTTP for development. Origin-keyed agent clustering must be enabled; current Chrome enables it by default, so an `Origin-Agent-Cluster: ?1` header is optional.
 
 Load the polyfill before registering tools:
 
@@ -37,14 +37,14 @@ await context.registerTool(
   { signal: registration.signal },
 );
 
-const [tool] = await context.getTools();
+const tool = (await context.getTools()).find((tool) => tool.name === "page-title")!;
 console.log(await context.executeTool(tool, {})); // {"title":"WebMCP demo"}
 
 // Remove the tool when it is no longer needed.
 registration.abort();
 ```
 
-To install explicitly, import and call `installWebMCP` from `webmcp-polyfill`. Installation requires a secure browser context and leaves an existing `document.modelContext` unchanged, including partial native implementations. It affects only the realm that calls it, so each frame installs separately.
+For explicit installation, import and call `installWebMCP` from `webmcp-polyfill`. It is safe to call repeatedly and during server-side rendering. Existing `document.modelContext` implementations are preserved, including partial native implementations. Each frame installs separately.
 
 ## Scope
 
@@ -52,13 +52,13 @@ Tools stay in the current document. Cross-document tools, declarative forms, lif
 
 `executeTool()` accepts an object and returns a JSON-serialized result. Callbacks must validate their inputs; schema inference provides TypeScript checks only.
 
-The implementation follows [draft source `cc45efc`](https://github.com/webmachinelearning/webmcp/blob/cc45efcaf0/index.bs). Of the 56 selected assertions of the [upstream WPT](https://github.com/web-platform-tests/wpt/tree/1a21db90adf8a264370ad806ed761f39e1d435a0/webmcp) at the pin, 51 pass and five fail where the pinned tests disagree with the draft's `executeTool()` input and result rules. [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) records each one and what the selection excludes.
+The implementation tracks the [Community Group draft](https://webmachinelearning.github.io/webmcp/). [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) records the draft and WPT revisions, test coverage, and known limitations.
 
 The API tracks the draft. Breaking changes ship with notes: in minor releases while the version is 0.x, in majors after 1.0.
 
 ## Development
 
-See [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) for browser setup, test commands, draft alignment, and known limitations.
+See [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) for browser setup and test commands.
 
 ## License
 

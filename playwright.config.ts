@@ -17,7 +17,7 @@ export default defineConfig({
       name: "chromium",
       use: {
         browserName: "chromium",
-        launchOptions: { args: ["--disable-features=WebMCP,WebMCPTesting"] },
+        launchOptions: { args: ["--disable-features=WebMCP"] },
       },
     },
     { name: "firefox", use: { browserName: "firefox" } },

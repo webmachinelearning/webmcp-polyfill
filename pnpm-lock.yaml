@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       webmcp-types:
-        specifier: ^0.1.7
-        version: 0.1.7
+        specifier: ^0.1.8
+        version: 0.1.8
     devDependencies:
       '@playwright/test':
         specifier: ^1.55.0
@@ -344,8 +344,8 @@ packages:
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
-  webmcp-types@0.1.7:
-    resolution: {integrity: sha512-70YszESbCx+ozBejmBPTSc0hMyXim+/Kpj8UOZsHd36ANcYqIfkDbMBTTn5y+tQzQYUYN1x2R+5PseKJtVaLqA==}
+  webmcp-types@0.1.8:
+    resolution: {integrity: sha512-YtI13B7j9v8F4j+UyVr5ohg1GHl3IMu/Ozw08RqGh58Ft29rrr4Wh5W/Y3WfkARjchrcTpoOPxa939reQZ1Zzg==}
 
 snapshots:
 
@@ -553,4 +553,4 @@ snapshots:
 
   undici-types@7.18.2: {}
 
-  webmcp-types@0.1.7: {}
+  webmcp-types@0.1.8: {}

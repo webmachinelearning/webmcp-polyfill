@@ -47,6 +47,8 @@ test("only potentially trustworthy origins reach the cross-document refusal", as
       const results: [string, string][] = [];
       for (const origin of [
         "https://example.test",
+        "blob:https://example.test/id",
+        "blob:http://localhost:8793/id",
         "wss://example.test",
         "file:///tmp",
         "http://127.0.0.1:8793",
@@ -56,6 +58,7 @@ test("only potentially trustworthy origins reach the cross-document refusal", as
         "http://app.localhost:8793",
         "ws://localhost:8793",
         "http://example.test",
+        "blob:http://example.test/id",
         "ws://example.test",
         "ftp://localhost",
         "http://127.example.test",
@@ -73,6 +76,8 @@ test("only potentially trustworthy origins reach the cross-document refusal", as
     }),
   ).toEqual([
     ["https://example.test", "NotSupportedError"],
+    ["blob:https://example.test/id", "NotSupportedError"],
+    ["blob:http://localhost:8793/id", "NotSupportedError"],
     ["wss://example.test", "NotSupportedError"],
     ["file:///tmp", "NotSupportedError"],
     ["http://127.0.0.1:8793", "NotSupportedError"],
@@ -82,6 +87,7 @@ test("only potentially trustworthy origins reach the cross-document refusal", as
     ["http://app.localhost:8793", "NotSupportedError"],
     ["ws://localhost:8793", "NotSupportedError"],
     ["http://example.test", "SecurityError"],
+    ["blob:http://example.test/id", "SecurityError"],
     ["ws://example.test", "SecurityError"],
     ["ftp://localhost", "SecurityError"],
     ["http://127.example.test", "SecurityError"],
@@ -172,7 +178,7 @@ test("registration converts every dictionary member in Web IDL order", async ({ 
   expect(
     await page.evaluate(async () => {
       const reads: string[] = [];
-      const record = <T,>(name: string, value: T): T => {
+      const record = <T>(name: string, value: T): T => {
         reads.push(name);
         return value;
       };
@@ -585,12 +591,7 @@ test("validates origins and refuses cross-document exposure", async ({ page }) =
       }
       return errors;
     }),
-  ).toEqual([
-    "SecurityError",
-    "SecurityError",
-    "NotSupportedError",
-    "NotSupportedError",
-  ]);
+  ).toEqual(["SecurityError", "SecurityError", "NotSupportedError", "NotSupportedError"]);
 });
 
 test("inactive documents get their own context but cannot register tools", async ({ page }) => {

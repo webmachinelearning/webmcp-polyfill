@@ -26,9 +26,8 @@ async function register() {
   element("status").textContent = "registered";
 }
 element("register").onclick = register;
-element("unregister").onclick = async () => {
+element("unregister").onclick = () => {
   registration.abort();
-  await context.getTools();
   element("status").textContent = "unregistered";
 };
 element("execute").onclick = async () => {

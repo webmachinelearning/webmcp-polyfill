@@ -1,8 +1,7 @@
 # Working on the polyfill
 
 This package implements the document-local imperative WebMCP draft. Use the
-official `webmcp-types` dependency; do not duplicate its declarations. Keep the
-temporary `executeTool` augmentation only until the upstream package ships it.
+official `webmcp-types` dependency; do not duplicate its declarations.
 No MCP server, transport, extension product, navigator aliases, or legacy API
 compatibility belongs here.
 

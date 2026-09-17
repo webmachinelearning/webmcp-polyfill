@@ -10,8 +10,6 @@ if (!root || !chrome)
   throw new Error("Set WPT_ROOT to a WPT checkout and CHROME_BIN to Chrome Canary");
 
 const revision = "1a21db90adf8a264370ad806ed761f39e1d435a0";
-// Pinned together with `revision` and `tests`; keep TESTING.md in sync.
-const EXPECTED_ASSERTIONS = 56;
 const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
 if (head.error) throw head.error;
 if (head.status !== 0 || head.stdout.trim() !== revision) {
@@ -23,36 +21,9 @@ if (clean.status !== 0) {
   throw new Error("WPT has tracked changes; restore the pinned sources before running conformance");
 }
 
-// Unmodified upstream files. Draft disagreements are tracked by exact subtest
-// in wpt-metadata, never by patching tests or silently skipping failures.
-const tests = [
-  "imperative/register_tool_name_validation.https.html",
-  "imperative/register_tool_signal.https.html",
-  "imperative/register_tool_with_schema.https.html",
-  "imperative/register_tool_no_schema.https.html",
-  "imperative/register_tool_invalid_json_schema.https.html",
-  "imperative/register_tool_toolchange.https.html",
-  "imperative/duplicate_tool_registration.https.html",
-  "imperative/getTools-imperative-schema.https.html",
-  "imperative/model_context.https.html",
-  "imperative/non-secure.html",
-  "idlharness.https.window.html",
-  "imperative/register-tool-title.https.html",
-  "imperative/register_tool_with_empty_annotation.https.html",
-  "imperative/getTools-imperative-annotations.https.html",
-  "imperative/executeTool-invalid-dictionary.https.html",
-  "imperative/executeTool-error-window-onerror.https.html",
-  "imperative/executeTool-unregister-resolution-race.https.html",
-  "imperative/object-arguments.https.html",
-];
 const report = fileURLToPath(new URL("./wpt-results/report.json", import.meta.url));
 mkdirSync(dirname(report), { recursive: true });
 rmSync(report, { force: true });
-for (const test of tests) {
-  const source = test.replace(/\.https\.window\.html$/, ".https.window.js");
-  if (!existsSync(resolve(root, "webmcp", source)))
-    throw new Error(`Missing WPT source: ${source}`);
-}
 const result = spawnSync(
   process.env.WPT_PYTHON ?? "python3",
   [
@@ -70,7 +41,7 @@ const result = spawnSync(
     "--no-enable-experimental",
     "--test-types",
     "testharness",
-    "--binary-arg=--disable-features=WebMCP,WebMCPTesting",
+    "--binary-arg=--disable-features=WebMCP",
     "--inject-script",
     fileURLToPath(new URL("./dist/polyfill.js", import.meta.url)),
     "--manifest",
@@ -82,34 +53,31 @@ const result = spawnSync(
     report,
     "--no-pause-after-test",
     "--processes",
-    "1",
+    "4",
     "--no-manifest-download",
-    ...tests.flatMap((test) => ["--include", `/webmcp/${test}`]),
+    "--include",
+    "/webmcp",
     "chrome",
   ],
   { cwd: root, stdio: "inherit" },
 );
 if (result.error) throw result.error;
-if (result.status !== 0) throw new Error(`WPT reported unexpected results (exit ${result.status})`);
 if (!existsSync(report)) throw new Error("WPT produced no report");
 const { results } = JSON.parse(readFileSync(report, "utf8"));
-const actual = results.map(({ test }) => test).sort();
-const expected = tests.map((test) => `/webmcp/${test}`).sort();
-assert.deepEqual(
-  actual,
-  expected,
-  "WPT selection did not run exactly once: inspect wpt-results/report.json",
+const subtests = results.flatMap((entry) => entry.subtests);
+// Counts are tied to the pin. Catch missing files, retries, and prematurely stopped harnesses.
+assert.equal(results.length, 58, "Expected all 58 WebMCP testharness files at the pin");
+assert.equal(
+  new Set(results.map(({ test }) => test)).size,
+  results.length,
+  "WPT repeated a test file",
 );
-const empty = results.filter((entry) => !entry.subtests.length).map(({ test }) => test);
-if (empty.length) throw new Error(`WPT files ran no assertions: ${empty.join(", ")}`);
-const assertions = results.reduce((count, entry) => count + entry.subtests.length, 0);
-if (assertions !== EXPECTED_ASSERTIONS) {
-  const counts = results.map(({ test, subtests }) => `  ${test}: ${subtests.length}`).join("\n");
-  throw new Error(
-    `Expected ${EXPECTED_ASSERTIONS} assertions at WPT ${revision}, got ${assertions}.\n${counts}\n` +
-      "Fewer means a testharness file stopped early, which expected-failure metadata cannot " +
-      "catch: fix the polyfill. More, or a deliberate change to `revision` or `tests`, means " +
-      "updating EXPECTED_ASSERTIONS here and the counts in TESTING.md.",
-  );
-}
-console.log(`WPT: ${results.length} files, ${assertions} assertions. Report: ${report}`);
+assert.equal(
+  subtests.length,
+  139,
+  "WPT subtest count changed; inspect the report and expectations",
+);
+const counts = { PASS: 0, FAIL: 0, TIMEOUT: 0, NOTRUN: 0 };
+for (const { status } of subtests) counts[status] = (counts[status] ?? 0) + 1;
+console.log(`WPT: ${results.length} files; subtests ${JSON.stringify(counts)}. Report: ${report}`);
+if (result.status !== 0) throw new Error(`WPT reported unexpected results (exit ${result.status})`);
