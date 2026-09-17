@@ -1,4 +1,4 @@
-import "./dist/auto.js";
+import "../dist/auto.js";
 
 if (document.modelContext) {
   const context: WebMCP.ModelContext = document.modelContext;

@@ -16,13 +16,13 @@ const appHtml = `<!doctype html>
 <script type="module" src="/app.js"></script>`;
 
 createServer(async (request, response) => {
-  const path = new URL(request.url, "http://localhost").pathname;
+  const path = new URL(request.url ?? "/", "http://localhost").pathname;
   response.setHeader("Origin-Agent-Cluster", path === "/no-cluster" ? "?0" : "?1");
   response.setHeader("Cache-Control", "no-store");
 
   try {
     if (path === "/auto.js" || path === "/app.js") {
-      const scriptPath = path === "/auto.js" ? "../dist/polyfill.js" : "./app.js";
+      const scriptPath = path === "/auto.js" ? "../../dist/polyfill.js" : "./app.js";
       const source = await readFile(new URL(scriptPath, import.meta.url));
       response.setHeader("Content-Type", "text/javascript");
       response.end(source);

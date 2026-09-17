@@ -1,10 +1,10 @@
-import type { WebMCP } from "webmcp-types";
-export type { WebMCP } from "webmcp-types";
-
 /*!
  * Copyright (c) 2026 WebMCP polyfill contributors
  * SPDX-License-Identifier: MIT
  */
+
+import type { WebMCP } from "webmcp-types";
+export type { WebMCP } from "webmcp-types";
 
 // Detached windows may stop exposing these bindings.
 const NativeDOMException = globalThis.DOMException;
@@ -16,6 +16,8 @@ interface StoredTool {
   serializedSchema?: string;
   execute: WebMCP.ToolExecuteCallback<object>;
 }
+
+const contexts = new WeakMap<Document, ModelContextPolyfill>();
 
 /**
  * Install document-local WebMCP in the current window.
@@ -77,7 +79,6 @@ export function installWebMCP(): void {
   });
 }
 
-// Default parameters preserve Web IDL's required-argument counts in function.length.
 class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
   readonly #document: Document;
   readonly #tools = new Map<string, StoredTool>();
@@ -113,6 +114,7 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     this.#toolchangeHandler = nextHandler;
   }
 
+  // Default parameters preserve Web IDL's required-argument counts in function.length.
   async registerTool(
     tool: object,
     options: WebMCP.ModelContextRegisterToolOptions = {},
@@ -150,15 +152,13 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
         name,
         title,
         description,
+        annotations,
         window: ownerWindow,
         origin: ownerWindow.origin,
       },
       serializedSchema,
       execute,
     };
-    if (annotations !== undefined) {
-      storedTool.metadata.annotations = annotations;
-    }
 
     return new Promise<void>((resolve, reject) => {
       // Abort unregisters the tool and also rejects any pending registration.
@@ -187,20 +187,14 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     requireActiveWindow(this.#document);
     rejectUnsupportedOrigins(fromOrigins);
 
-    const tools: WebMCP.RegisteredTool[] = [];
-    for (const storedTool of this.#tools.values()) {
-      tools.push(copyToolMetadata(storedTool));
-    }
+    const tools = Array.from(this.#tools.values(), copyToolMetadata);
 
     // Compare code units; localeCompare() would change the draft's sort order.
     tools.sort((left, right) => {
-      if (left.name < right.name) {
-        return -1;
+      if (left.name === right.name) {
+        return 0;
       }
-      if (left.name > right.name) {
-        return 1;
-      }
-      return 0;
+      return left.name < right.name ? -1 : 1;
     });
 
     return new Promise((resolve) => {
@@ -235,23 +229,11 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
 
     return new Promise<string>((resolve, reject) => {
       const callbackController = new AbortController();
-      // Cancellation can arrive after the callback finishes but before its result is delivered.
-      let callerSettled = false;
+      // Cancellation can arrive after the callback finishes but before its result is delivered;
+      // the promise is already rejected then, so a late resolve is ignored.
       let callbackFinished = false;
 
-      const settleCaller = (): boolean => {
-        if (callerSettled) {
-          return false;
-        }
-        callerSettled = true;
-        callerSignal?.removeEventListener("abort", onCallerAbort);
-        return true;
-      };
-
       const onCallerAbort = (): void => {
-        if (!settleCaller()) {
-          return;
-        }
         reject(callerSignal!.reason);
 
         // Reject the caller first; the running callback receives a default AbortError.
@@ -265,9 +247,7 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
       const rejectExecution = (): void => {
         callbackFinished = true;
         queueTask(() => {
-          if (!settleCaller()) {
-            return;
-          }
+          callerSignal?.removeEventListener("abort", onCallerAbort);
           reject(new NativeDOMException("Tool execution failed", "UnknownError"));
         });
       };
@@ -275,16 +255,15 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
       const completeExecution = (value: unknown): void => {
         callbackFinished = true;
         // A cancelled call must not run the author's toJSON during serialization.
-        if (callerSettled) {
+        if (callerSignal?.aborted) {
           return;
         }
 
         try {
           const serializedResult = serializeJSON(value);
           queueTask(() => {
-            if (settleCaller()) {
-              resolve(serializedResult);
-            }
+            callerSignal?.removeEventListener("abort", onCallerAbort);
+            resolve(serializedResult);
           });
         } catch {
           rejectExecution();
@@ -292,7 +271,7 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
       };
 
       const dispatchTool = (): void => {
-        if (callerSettled) {
+        if (callerSignal?.aborted) {
           return;
         }
 
@@ -329,8 +308,6 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
   }
 }
 
-const contexts = new WeakMap<Document, ModelContextPolyfill>();
-
 // Web IDL exposes a non-constructible interface with enumerable prototype members.
 const modelContextConstructor = function ModelContext(): never {
   throw new TypeError("Illegal constructor");
@@ -365,7 +342,7 @@ function readToolDefinition(value: unknown) {
   const inputSchema = readInputSchema(descriptor.inputSchema);
   const name = toDOMString(requireMember(descriptor.name, "name"));
   const rawTitle = descriptor.title;
-  const title = rawTitle === undefined ? "" : toDOMString(rawTitle).toWellFormed();
+  const title = rawTitle === undefined ? "" : toUSVString(rawTitle);
 
   return { name, title, description, annotations, inputSchema, execute };
 }
@@ -377,7 +354,7 @@ function readExecutionTarget(value: unknown) {
   toDOMString(requireMember(descriptor.description, "description"));
   readInputSchema(descriptor.inputSchema);
   const name = toDOMString(requireMember(descriptor.name, "name"));
-  const origin = toDOMString(requireMember(descriptor.origin, "origin")).toWellFormed();
+  const origin = toUSVString(requireMember(descriptor.origin, "origin"));
   const title = descriptor.title;
   if (title !== undefined) {
     toDOMString(title);
@@ -400,12 +377,9 @@ function readInputSchema(value: unknown): object | undefined {
 }
 
 function copyToolMetadata({ metadata, serializedSchema }: StoredTool): WebMCP.RegisteredTool {
-  let inputSchema: object | undefined;
-  if (serializedSchema !== undefined) {
-    // The draft preserves the JSON result, even if toJSON returned a primitive.
-    // RegisteredTool.inputSchema is typed as object; this cast bridges that mismatch.
-    inputSchema = JSON.parse(serializedSchema) as object;
-  }
+  // SAFETY: the draft keeps whatever JSON toJSON produced; the cast matches RegisteredTool's type.
+  const inputSchema =
+    serializedSchema === undefined ? undefined : (JSON.parse(serializedSchema) as object);
 
   // Insert members in Web IDL order, then omit absent optional members.
   const tool: WebMCP.RegisteredTool = {
@@ -463,6 +437,11 @@ function toDOMString(value: unknown): string {
   return String(value);
 }
 
+// https://webidl.spec.whatwg.org/#es-USVString
+function toUSVString(value: unknown): string {
+  return toDOMString(value).toWellFormed();
+}
+
 function requireMember(value: unknown, name: string): unknown {
   if (value === undefined) {
     throw new TypeError(`${name} is required`);
@@ -505,7 +484,7 @@ function readOriginSequence(value: unknown): string[] {
       return Reflect.apply(getIterator, value, []);
     },
   };
-  return Array.from(iterable, (origin) => toDOMString(origin).toWellFormed());
+  return Array.from(iterable, toUSVString);
 }
 
 // Validate before refusing cross-document support, preserving SecurityError precedence.

@@ -66,6 +66,8 @@ Breaking API changes ship with notes: in minor releases while the version is 0.x
 
 ## Development
 
+`src/` contains the polyfill and its automatic entry point. `tests/` contains the browser and package checks with their fixtures. `wpt/` contains the upstream test runner, pinned revision, and expectations.
+
 See [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) for browser setup and test commands.
 
 ## License

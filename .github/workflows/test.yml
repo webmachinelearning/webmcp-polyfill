@@ -44,7 +44,7 @@ jobs:
           persist-credentials: false
       - name: Read WPT revision
         id: wpt
-        run: echo "revision=$(cat wpt-revision.txt)" >> "$GITHUB_OUTPUT"
+        run: echo "revision=$(cat wpt/revision.txt)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: web-platform-tests/wpt

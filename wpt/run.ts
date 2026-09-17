@@ -10,7 +10,7 @@ if (!wptRoot || !chromeBinary) {
   throw new Error("Set WPT_ROOT to a WPT checkout and CHROME_BIN to Chrome Canary");
 }
 
-const pinnedRevision = readFileSync(new URL("./wpt-revision.txt", import.meta.url), "utf8").trim();
+const pinnedRevision = readFileSync(new URL("./revision.txt", import.meta.url), "utf8").trim();
 const checkoutRevision = spawnSync("git", ["rev-parse", "HEAD"], {
   cwd: wptRoot,
   encoding: "utf8",
@@ -32,7 +32,7 @@ if (checkoutDiff.status !== 0) {
   throw new Error("WPT has tracked changes; restore the pinned sources before running conformance");
 }
 
-const reportPath = fileURLToPath(new URL("./wpt-results/report.json", import.meta.url));
+const reportPath = fileURLToPath(new URL("../wpt-results/report.json", import.meta.url));
 mkdirSync(dirname(reportPath), { recursive: true });
 rmSync(reportPath, { force: true });
 
@@ -55,11 +55,11 @@ const wptRun = spawnSync(
     "testharness",
     "--binary-arg=--disable-features=WebMCP",
     "--inject-script",
-    fileURLToPath(new URL("./dist/polyfill.js", import.meta.url)),
+    fileURLToPath(new URL("../dist/polyfill.js", import.meta.url)),
     "--manifest",
     resolve(wptRoot, "MANIFEST.json"),
     "--metadata",
-    fileURLToPath(new URL("./wpt-metadata", import.meta.url)),
+    fileURLToPath(new URL("./metadata", import.meta.url)),
     "--log-mach=-",
     "--log-wptreport",
     reportPath,
@@ -80,7 +80,7 @@ if (!existsSync(reportPath)) {
   throw new Error("WPT produced no report");
 }
 
-const { results } = JSON.parse(readFileSync(reportPath, "utf8"));
+const { results }: WptReport = JSON.parse(readFileSync(reportPath, "utf8"));
 const subtests = results.flatMap((fileResult) => fileResult.subtests);
 const uniqueFiles = new Set(results.map((fileResult) => fileResult.test));
 
@@ -92,13 +92,20 @@ assert.equal(
   139,
   "WPT subtest count changed; inspect the report and expectations",
 );
-const statusCounts = { PASS: 0, FAIL: 0, TIMEOUT: 0, NOTRUN: 0 };
+const statusCounts = { PASS: 0, FAIL: 0, TIMEOUT: 0, NOTRUN: 0, PRECONDITION_FAILED: 0 };
 for (const { status } of subtests) {
-  statusCounts[status] = (statusCounts[status] ?? 0) + 1;
+  statusCounts[status] += 1;
 }
 console.log(
   `WPT: ${results.length} files; subtests ${JSON.stringify(statusCounts)}. Report: ${reportPath}`,
 );
 if (wptRun.status !== 0) {
   throw new Error(`WPT reported unexpected results (exit ${wptRun.status})`);
+}
+
+interface WptReport {
+  results: {
+    test: string;
+    subtests: { status: "PASS" | "FAIL" | "TIMEOUT" | "NOTRUN" | "PRECONDITION_FAILED" }[];
+  }[];
 }

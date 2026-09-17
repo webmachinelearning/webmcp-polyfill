@@ -6,9 +6,10 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "declaration": true,
+    "rootDir": "src",
     "outDir": "dist",
     "types": [],
     "verbatimModuleSyntax": true
   },
-  "files": ["index.ts", "auto.ts"]
+  "files": ["src/index.ts", "src/auto.ts"]
 }

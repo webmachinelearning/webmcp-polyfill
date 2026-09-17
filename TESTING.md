@@ -15,19 +15,23 @@ pnpm test:package
 Tests load the built bundle from a real server in Chromium, Firefox, and WebKit.
 Chromium runs with native WebMCP disabled; a separate native Chromium test checks
 that installation preserves its context and registered tools.
-New root-level `*.test.ts` files are discovered and type-checked automatically.
-`native.test.ts` runs only in the native Chromium project.
+Browser tests in `tests/*.test.ts` are discovered automatically.
+`tests/native.test.ts` runs only in the native Chromium project;
+`tests/package.test.ts` runs separately through `pnpm test:package`.
+All source, tests, and Node scripts are type-checked, including the browser
+fixture JavaScript through `checkJs`. Node 24 runs the TypeScript scripts directly;
+they use erasable syntax and need no separate compilation step.
 
-| File               | Coverage                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------- |
-| `index.test.ts`    | Registration, discovery, conversion, metadata copies, events, abort, and detached documents |
-| `execute.test.ts`  | Object input, JSON results, cancellation, concurrent calls, and dispatch failures           |
-| `app.test.ts`      | Button interactions, callback side effects, invalid input, unregistration, and reload       |
-| `native.test.ts`   | Preservation of the native context, getter, and tools                                       |
-| `index.test-d.ts`  | Published declarations and upstream schema inference                                        |
-| `package.test.mjs` | Packed consumer imports, type inference, SSR entry points, and package contents             |
+| File                    | Coverage                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------- |
+| `tests/index.test.ts`   | Registration, discovery, conversion, metadata copies, events, abort, and detached documents |
+| `tests/execute.test.ts` | Object input, JSON results, cancellation, concurrent calls, and dispatch failures           |
+| `tests/app.test.ts`     | Button interactions, callback side effects, invalid input, unregistration, and reload       |
+| `tests/native.test.ts`  | Preservation of the native context, getter, and tools                                       |
+| `tests/index.test-d.ts` | Published declarations and upstream schema inference                                        |
+| `tests/package.test.ts` | Packed consumer imports, type inference, SSR entry points, and package contents             |
 
-The fixture server uses port 8793 and loopback HTTP, which is a secure context.
+The fixture server, `tests/fixtures/server.ts`, uses port 8793 and loopback HTTP, which is a secure context.
 It sends `Origin-Agent-Cluster: ?1` for consistent setup and `?0` on the opt-out
 fixture. The header is optional in current Chrome's default configuration.
 Playwright requires a free port and retains failure traces. Its bundled WebKit
@@ -37,7 +41,7 @@ provides engine coverage; it is not Safari.
 
 Use Python 3.11+, Chrome Canary, and a clean WPT checkout at
 [`1a21db90adf8a264370ad806ed761f39e1d435a0`](https://github.com/web-platform-tests/wpt/commit/1a21db90adf8a264370ad806ed761f39e1d435a0).
-CI and the local runner both read the pin from `wpt-revision.txt`.
+CI and the local runner both read the pin from `wpt/revision.txt`.
 A sparse checkout needs `common`, `docs`, `interfaces`, `resources`, `tools`,
 and `webmcp`, plus the root files. CI includes the checkout recipe.
 
@@ -49,12 +53,12 @@ WPT_ROOT=../wpt CHROME_BIN=/path/to/chrome-canary pnpm test:wpt
 On Ubuntu, CI installs an [AppArmor profile](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md)
 for Chrome to create its sandbox.
 
-The runner selects **every testharness test under `/webmcp`**, including
+`wpt/run.ts` selects **every testharness test under `/webmcp`**, including
 declarative and cross-document tests. Other WPT test types, such as crashtests,
 are outside this lane. Native WebMCP is disabled and WPT injects the built
 polyfill. Upstream test sources remain unchanged.
 
-`wpt-metadata/` contains standard WPT expectations with a reason for each
+`wpt/metadata/` contains standard WPT expectations with a reason for each
 affected file. Unexpected failures and unexpected passes fail the command.
 File and subtest counts catch missing coverage and early harness exits.
 Results and browser details are written to `wpt-results/report.json`.
@@ -118,5 +122,5 @@ When updating the draft or WPT pin, compare the
 [types](https://github.com/webmachinelearning/webmcp-types).
 Use [Blink source](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/script_tools/)
 for Chromium-specific details. Review every changed expectation, update
-`wpt-revision.txt` and the runner's coverage counts, and record browser versions
+`wpt/revision.txt` and the runner's coverage counts, and record browser versions
 and results separately.

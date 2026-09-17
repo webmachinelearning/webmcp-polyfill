@@ -3,10 +3,21 @@ const countOutput = document.getElementById("count");
 const registrationStatus = document.getElementById("status");
 const executionResult = document.getElementById("result");
 const amountInput = document.getElementById("amount");
+if (
+  !context ||
+  !countOutput ||
+  !registrationStatus ||
+  !executionResult ||
+  !(amountInput instanceof HTMLInputElement)
+) {
+  throw new Error("The counter fixture requires WebMCP and its form elements");
+}
+
+/** @type {AbortController} */
 let registration;
 let count = 0;
 
-async function register() {
+const register = async () => {
   registration = new AbortController();
   await context.registerTool(
     {
@@ -29,21 +40,21 @@ async function register() {
     { signal: registration.signal },
   );
   registrationStatus.textContent = "registered";
-}
+};
 
-document.getElementById("register").onclick = register;
-document.getElementById("unregister").onclick = () => {
+document.getElementById("register")?.addEventListener("click", register);
+document.getElementById("unregister")?.addEventListener("click", () => {
   registration.abort();
   registrationStatus.textContent = "unregistered";
-};
-document.getElementById("execute").onclick = async () => {
+});
+document.getElementById("execute")?.addEventListener("click", async () => {
   try {
     const [tool] = await context.getTools();
     const amount = Number(amountInput.value);
     executionResult.textContent = await context.executeTool(tool, { amount });
   } catch (error) {
-    executionResult.textContent = error.name;
+    executionResult.textContent = error instanceof Error ? error.name : String(error);
   }
-};
+});
 
 await register();

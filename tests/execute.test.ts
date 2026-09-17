@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import type {} from "./index.js";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -45,6 +44,40 @@ test("ignores late results after cancellation, including serialization side effe
   });
 
   expect(outcome).toBe(false);
+});
+
+test("cancellation during result serialization wins over queued delivery", async ({ page }) => {
+  const outcome = await page.evaluate(async () => {
+    const context = document.modelContext!;
+    const caller = new AbortController();
+    let callbackSignal: AbortSignal | undefined;
+
+    await context.registerTool({
+      name: "serialization",
+      description: "Serialization",
+      execute(_input, { signal }) {
+        callbackSignal = signal;
+        return {
+          toJSON() {
+            caller.abort("cancelled during serialization");
+            return "completed";
+          },
+        };
+      },
+    });
+
+    const [tool] = await context.getTools();
+    const reason = await context
+      .executeTool(tool, {}, { signal: caller.signal })
+      .catch((error) => error);
+    await context.getTools();
+    return { reason, callbackAborted: callbackSignal?.aborted };
+  });
+
+  expect(outcome).toEqual({
+    reason: "cancelled during serialization",
+    callbackAborted: false,
+  });
 });
 
 test("concurrent calls to the same tool have independent cancellation", async ({ page }) => {

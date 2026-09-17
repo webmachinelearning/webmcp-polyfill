@@ -1,15 +1,16 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
+  testDir: "./tests",
   testMatch: "**/*.test.ts",
-  testIgnore: "**/native.test.ts",
+  testIgnore: ["**/native.test.ts", "**/package.test.ts"],
   forbidOnly: !!process.env.CI,
   fullyParallel: true,
   workers: 3,
   reporter: [["list"], ["html", { open: "never" }]],
   use: { baseURL: "http://localhost:8793", trace: "retain-on-failure" },
   webServer: {
-    command: "node fixtures/server.mjs",
+    command: "node tests/fixtures/server.ts",
     url: "http://localhost:8793/health",
     reuseExistingServer: false,
   },

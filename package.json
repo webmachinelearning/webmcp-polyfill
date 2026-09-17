@@ -20,12 +20,12 @@
     "./auto": "./dist/auto.js"
   },
   "scripts": {
-    "build": "tsc && esbuild auto.ts --bundle --format=iife --target=es2022 --minify --legal-comments=inline --outfile=dist/polyfill.js",
+    "build": "tsc && esbuild src/auto.ts --bundle --format=iife --target=es2022 --minify --legal-comments=inline --outfile=dist/polyfill.js",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "pnpm lint && pnpm build && pnpm typecheck && playwright test",
-    "test:wpt": "pnpm build && node wpt.mjs",
+    "test:wpt": "pnpm build && node wpt/run.ts",
     "prepack": "pnpm build",
-    "test:package": "node package.test.mjs",
+    "test:package": "node tests/package.test.ts",
     "lint": "oxlint --deny-warnings"
   },
   "dependencies": {

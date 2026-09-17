@@ -1,5 +1,4 @@
 import { test, expect } from "@playwright/test";
-import type {} from "./index.js";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");

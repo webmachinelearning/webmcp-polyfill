@@ -6,7 +6,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const consumerDirectory = mkdtempSync(join(tmpdir(), "webmcp-consumer-"));
-const packageDirectory = fileURLToPath(new URL(".", import.meta.url));
+const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
 
 try {
   run("pnpm", ["pack", "--pack-destination", consumerDirectory], packageDirectory);
@@ -119,7 +119,7 @@ try {
   rmSync(consumerDirectory, { recursive: true, force: true });
 }
 
-function run(command, args, cwd = consumerDirectory) {
+function run(command: string, args: string[], cwd = consumerDirectory): void {
   const result = spawnSync(command, args, { cwd, stdio: "inherit" });
   if (result.error) {
     throw result.error;
