@@ -1,7 +1,11 @@
 const context = document.modelContext;
-const element = (id) => document.getElementById(id);
+const countOutput = document.getElementById("count");
+const registrationStatus = document.getElementById("status");
+const executionResult = document.getElementById("result");
+const amountInput = document.getElementById("amount");
 let registration;
 let count = 0;
+
 async function register() {
   registration = new AbortController();
   await context.registerTool(
@@ -14,30 +18,32 @@ async function register() {
         required: ["amount"],
       },
       execute({ amount }) {
-        if (!Number.isFinite(amount) || amount < 0)
+        if (!Number.isFinite(amount) || amount < 0) {
           throw new TypeError("Expected a nonnegative amount");
+        }
         count += amount;
-        element("count").textContent = String(count);
+        countOutput.textContent = String(count);
         return { count };
       },
     },
     { signal: registration.signal },
   );
-  element("status").textContent = "registered";
+  registrationStatus.textContent = "registered";
 }
-element("register").onclick = register;
-element("unregister").onclick = () => {
+
+document.getElementById("register").onclick = register;
+document.getElementById("unregister").onclick = () => {
   registration.abort();
-  element("status").textContent = "unregistered";
+  registrationStatus.textContent = "unregistered";
 };
-element("execute").onclick = async () => {
+document.getElementById("execute").onclick = async () => {
   try {
     const [tool] = await context.getTools();
-    element("result").textContent = await context.executeTool(tool, {
-      amount: Number(element("amount").value),
-    });
+    const amount = Number(amountInput.value);
+    executionResult.textContent = await context.executeTool(tool, { amount });
   } catch (error) {
-    element("result").textContent = error.name;
+    executionResult.textContent = error.name;
   }
 };
+
 await register();

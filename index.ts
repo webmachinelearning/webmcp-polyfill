@@ -396,7 +396,8 @@ function readInputSchema(value: unknown): object | undefined {
 function copyToolMetadata({ metadata, serializedSchema }: StoredTool): WebMCP.RegisteredTool {
   let inputSchema: object | undefined;
   if (serializedSchema !== undefined) {
-    // The draft returns parsed JSON unchanged; RegisteredTool declares it as an object.
+    // The draft preserves the JSON result, even if toJSON returned a primitive.
+    // RegisteredTool.inputSchema is typed as object; this cast bridges that mismatch.
     inputSchema = JSON.parse(serializedSchema) as object;
   }
 
@@ -488,16 +489,13 @@ function readOriginSequence(value: unknown): string[] {
   if (!isObject(value)) {
     throw new TypeError("Origins must be a sequence");
   }
-  const getIterator: unknown = Reflect.get(value, Symbol.iterator);
+  const getIterator = readDictionary(value)[Symbol.iterator];
   if (typeof getIterator !== "function") {
     throw new TypeError("Origins must be a sequence");
   }
-  // Web IDL gets the iterator method once and calls it with the original receiver.
-  const iterable = {
-    [Symbol.iterator]() {
-      return Reflect.apply(getIterator, value, []);
-    },
-  };
+  // Preserve the receiver without reading author-defined call or bind properties.
+  const iterate = Function.prototype.call.bind(getIterator, value);
+  const iterable = { [Symbol.iterator]: iterate };
   return Array.from(iterable, (origin) => toDOMString(origin).toWellFormed());
 }
 

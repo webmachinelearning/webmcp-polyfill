@@ -23,7 +23,9 @@ Load the polyfill before registering tools:
 import "webmcp-polyfill/auto";
 
 const context = document.modelContext;
-if (!context) throw new Error("WebMCP requires a secure browser context");
+if (!context) {
+  throw new Error("WebMCP requires a secure browser context");
+}
 
 const registration = new AbortController();
 await context.registerTool(
@@ -37,8 +39,14 @@ await context.registerTool(
   { signal: registration.signal },
 );
 
-const tool = (await context.getTools()).find((tool) => tool.name === "page-title")!;
-console.log(await context.executeTool(tool, {})); // {"title":"WebMCP demo"}
+const tools = await context.getTools();
+const pageTitleTool = tools.find((tool) => tool.name === "page-title");
+if (!pageTitleTool) {
+  throw new Error("The page-title tool is unavailable");
+}
+
+const result = await context.executeTool(pageTitleTool, {});
+console.log(result);
 
 // Remove the tool when it is no longer needed.
 registration.abort();
@@ -54,7 +62,7 @@ Tools stay in the current document. Cross-document tools, declarative forms, lif
 
 The implementation tracks the [Community Group draft](https://webmachinelearning.github.io/webmcp/). [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) records the draft and WPT revisions, test coverage, and known limitations.
 
-The API tracks the draft. Breaking changes ship with notes: in minor releases while the version is 0.x, in majors after 1.0.
+Breaking API changes ship with notes: in minor releases while the version is 0.x, in majors after 1.0.
 
 ## Development
 

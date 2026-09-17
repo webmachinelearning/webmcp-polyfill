@@ -10,18 +10,24 @@ test("a served application executes, rejects invalid input, unregisters, and res
   });
   const errors: Error[] = [];
   page.on("pageerror", (error) => errors.push(error));
+
   await page.goto("/app");
   await expect(page.locator("#status")).toHaveText("registered");
+
   await page.getByRole("button", { name: "Execute on page" }).click();
   await expect(page.locator("#result")).toHaveText('{"count":2}');
   await expect(page.locator("#count")).toHaveText("2");
+
   await page.getByLabel("Amount").fill("-1");
   await page.getByRole("button", { name: "Execute on page" }).click();
   await expect(page.locator("#result")).toHaveText("UnknownError");
   await expect(page.locator("#count")).toHaveText("2");
+
   await page.getByRole("button", { name: "Unregister", exact: true }).click();
   await expect(page.locator("#status")).toHaveText("unregistered");
-  expect(await page.evaluate(() => document.modelContext!.getTools())).toEqual([]);
+  const tools = await page.evaluate(() => document.modelContext!.getTools());
+  expect(tools).toEqual([]);
+
   await page.reload();
   await expect(page.locator("#status")).toHaveText("registered");
   await expect(page.locator("#count")).toHaveText("0");

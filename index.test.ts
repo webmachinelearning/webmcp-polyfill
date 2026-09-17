@@ -27,7 +27,9 @@ test("every operation rejects when the server opts out of origin-keyed agent clu
         await operation();
         errors.push("resolved");
       } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        if (!(error instanceof Error)) {
+          throw error;
+        }
         errors.push(error.name);
       }
     }
@@ -67,7 +69,9 @@ test("only potentially trustworthy origins reach the cross-document refusal", as
         await context.getTools({ fromOrigins: [origin] });
         results.push([origin, "resolved"]);
       } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        if (!(error instanceof Error)) {
+          throw error;
+        }
         results.push([origin, error.name]);
       }
     }
@@ -113,7 +117,9 @@ test("a cross-origin frame is denied without a native Permissions Policy", async
       await document.modelContext!.getTools();
       return "resolved";
     } catch (error) {
-      if (!(error instanceof Error)) throw error;
+      if (!(error instanceof Error)) {
+        throw error;
+      }
       return error.name;
     }
   });
@@ -134,7 +140,9 @@ test("a signal option that is not an AbortSignal is rejected", async ({ page }) 
         await context.registerTool(tool, { signal });
         results.push([label, "resolved"]);
       } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        if (!(error instanceof Error)) {
+          throw error;
+        }
         results.push([label, error.name]);
       }
     }
@@ -157,7 +165,7 @@ test("an already-aborted registration signal registers nothing and fires no tool
     const context = document.modelContext!;
     let changes = 0;
     context.ontoolchange = () => changes++;
-    let reason: unknown = "resolved";
+    let reason: unknown;
     try {
       await context.registerTool(
         { name: "x", description: "X", execute: () => null },
@@ -167,7 +175,8 @@ test("an already-aborted registration signal registers nothing and fires no tool
       reason = error;
     }
     // getTools() resolves from a queued task, so awaiting it drains any pending toolchange.
-    return { reason, count: (await context.getTools()).length, changes };
+    const tools = await context.getTools();
+    return { reason, count: tools.length, changes };
   });
 
   expect(outcome).toEqual({ reason: "already aborted", count: 0, changes: 0 });
@@ -231,23 +240,48 @@ test("origin conversion gets an iterator only once and preserves its receiver", 
 }) => {
   await page.addScriptTag({ url: "/auto.js" });
   const outcome = await page.evaluate(async () => {
-    let reads = 0;
-    let receiver = false;
-    const origins = {
-      get [Symbol.iterator]() {
-        if (++reads > 1) throw new Error("Iterator getter was read twice");
-        return function (this: typeof origins) {
-          receiver = this === origins;
-          return [][Symbol.iterator]();
-        };
-      },
-    };
-    // @ts-expect-error Web IDL accepts iterables; the published types use arrays.
-    await document.modelContext!.getTools({ fromOrigins: origins });
-    return { reads, receiver };
+    const context = document.modelContext!;
+    const results = [];
+    for (const operation of ["registration", "discovery"]) {
+      let reads = 0;
+      let receiver = false;
+      const origins = {
+        get [Symbol.iterator]() {
+          reads++;
+          if (reads > 1) {
+            throw new Error("Iterator getter was read twice");
+          }
+          const getIterator = function (this: typeof origins) {
+            receiver = this === origins;
+            return [][Symbol.iterator]();
+          };
+          // Invocation must not consult the method's call, apply, bind, name, or length.
+          return new Proxy(getIterator, {
+            get() {
+              throw new Error("Iterator method properties must not be read");
+            },
+          });
+        },
+      };
+      if (operation === "registration") {
+        // @ts-expect-error Web IDL accepts iterables; the published types use arrays.
+        await context.registerTool(
+          { name: "iterable", description: "Iterable origins", execute: () => null },
+          { exposedTo: origins },
+        );
+      } else {
+        // @ts-expect-error Web IDL accepts iterables; the published types use arrays.
+        await context.getTools({ fromOrigins: origins });
+      }
+      results.push({ operation, reads, receiver });
+    }
+    return results;
   });
 
-  expect(outcome).toEqual({ reads: 1, receiver: true });
+  expect(outcome).toEqual([
+    { operation: "registration", reads: 1, receiver: true },
+    { operation: "discovery", reads: 1, receiver: true },
+  ]);
 });
 
 test("operations on a real detached frame reject in the frame's realm", async ({ page }) => {
@@ -291,13 +325,17 @@ test("installs once, exposes only standard members, and keeps document identity"
   const result = await page.evaluate(() => {
     const context = document.modelContext!;
     const constructor = "ModelContext" in window ? window.ModelContext : undefined;
-    if (typeof constructor !== "function") throw new Error("ModelContext constructor is missing");
+    if (typeof constructor !== "function") {
+      throw new Error("ModelContext constructor is missing");
+    }
     const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, "modelContext")!;
     let constructionError = "";
     try {
       Reflect.construct(constructor, []);
     } catch (error) {
-      if (!(error instanceof Error)) throw error;
+      if (!(error instanceof Error)) {
+        throw error;
+      }
       constructionError = error.name;
     }
     const getterErrors = [];
@@ -306,7 +344,9 @@ test("installs once, exposes only standard members, and keeps document identity"
         descriptor.get!.call(receiver);
         getterErrors.push("resolved");
       } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        if (!(error instanceof Error)) {
+          throw error;
+        }
         getterErrors.push(error.name);
       }
     }
@@ -421,7 +461,7 @@ test("rejects invalid descriptors, duplicates and unserializable schemas", async
     await context.registerTool(good);
     const circular = {};
     Object.assign(circular, { self: circular });
-    const cases: [string, unknown][] = [
+    const cases = [
       ["null descriptor", null],
       ["execute is not callable", { ...good, execute: 1 }],
       ["name is a Symbol", { ...good, name: Symbol() }],
@@ -436,7 +476,7 @@ test("rejects invalid descriptors, duplicates and unserializable schemas", async
         "inputSchema serializes to undefined",
         { ...good, name: "undefined", inputSchema: { toJSON: () => undefined } },
       ],
-    ];
+    ] as const;
     const results: [string, string][] = [];
     for (const [label, descriptor] of cases) {
       try {
@@ -444,11 +484,14 @@ test("rejects invalid descriptors, duplicates and unserializable schemas", async
         await context.registerTool(descriptor);
         results.push([label, "resolved"]);
       } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        if (!(error instanceof Error)) {
+          throw error;
+        }
         results.push([label, error.name]);
       }
     }
-    return { rejections: results, registered: (await context.getTools()).map((tool) => tool.name) };
+    const tools = await context.getTools();
+    return { rejections: results, registered: tools.map((tool) => tool.name) };
   });
   expect(rejections).toEqual([
     ["null descriptor", "TypeError"],
@@ -463,7 +506,6 @@ test("rejects invalid descriptors, duplicates and unserializable schemas", async
     ["inputSchema is circular", "TypeError"],
     ["inputSchema serializes to undefined", "TypeError"],
   ]);
-  // A rejected registration must not leave a tool behind.
   expect(registered).toEqual(["valid"]);
 });
 
@@ -564,7 +606,8 @@ test("rejects aborted registration and permits reusing its name", async ({ page 
     controller.abort("cancel-registration");
     const reason = await pending;
     await context.registerTool(descriptor);
-    return [reason, (await context.getTools()).length];
+    const tools = await context.getTools();
+    return [reason, tools.length];
   });
 
   expect(outcome).toEqual(["cancel-registration", 1]);
@@ -579,7 +622,9 @@ test("validates origins and refuses cross-document exposure", async ({ page }) =
       try {
         await context.getTools({ fromOrigins: [origin] });
       } catch (error) {
-        if (!(error instanceof Error)) throw error;
+        if (!(error instanceof Error)) {
+          throw error;
+        }
         errors.push(error.name);
       }
     }
@@ -589,7 +634,9 @@ test("validates origins and refuses cross-document exposure", async ({ page }) =
         { exposedTo: ["https://other.test"] },
       );
     } catch (error) {
-      if (!(error instanceof Error)) throw error;
+      if (!(error instanceof Error)) {
+        throw error;
+      }
       errors.push(error.name);
     }
     return errors;
@@ -612,7 +659,9 @@ test("inactive documents get their own context but cannot register tools", async
     try {
       await context.registerTool({ name: "x", description: "X", execute() {} });
     } catch (error) {
-      if (!(error instanceof Error)) throw error;
+      if (!(error instanceof Error)) {
+        throw error;
+      }
       errorName = error.name;
     }
     return {
@@ -643,7 +692,9 @@ test("a detached frame rejects even when its exception constructor was never rea
       await context.getTools();
       return "resolved";
     } catch (error) {
-      if (!error || typeof error !== "object" || !("name" in error)) throw error;
+      if (!error || typeof error !== "object" || !("name" in error)) {
+        throw error;
+      }
       return { name: error.name, type: Object.prototype.toString.call(error) };
     }
   });

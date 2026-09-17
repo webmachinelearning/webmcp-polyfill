@@ -99,9 +99,7 @@ same-document cancellation and unregistration without lifecycle events.
 
 The implementation was checked against
 [draft source `df2d824`](https://github.com/webmachinelearning/webmcp/blob/df2d824e2cd2cbf8e15e25dad9dfe85d20e25082/index.bs).
-Its change from the earlier `cc45efc` reference documents Permissions Policy
-mitigation; API algorithms are unchanged. Public declarations come directly
-from `webmcp-types@0.1.8`.
+Public declarations come directly from `webmcp-types@0.1.8`.
 
 Timers approximate the WebMCP task source. Exact task ordering, navigation
 cleanup, and native abort algorithms cannot be reproduced. An invocation aborted

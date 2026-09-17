@@ -5,33 +5,37 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const consumer = mkdtempSync(join(tmpdir(), "webmcp-consumer-"));
-const root = fileURLToPath(new URL(".", import.meta.url));
-function run(command, args, cwd = consumer) {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
-  if (result.error) throw result.error;
-  assert.equal(result.status, 0, `${command} ${args.join(" ")} failed`);
-}
+const consumerDirectory = mkdtempSync(join(tmpdir(), "webmcp-consumer-"));
+const packageDirectory = fileURLToPath(new URL(".", import.meta.url));
+
 try {
-  run("pnpm", ["pack", "--pack-destination", consumer], root);
-  const archive = readdirSync(consumer).find((name) => name.endsWith(".tgz"));
+  run("pnpm", ["pack", "--pack-destination", consumerDirectory], packageDirectory);
+  const archive = readdirSync(consumerDirectory).find((name) => name.endsWith(".tgz"));
   assert.ok(archive, "pnpm pack produced no tarball");
-  writeFileSync(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  // Resolve declared dependencies with a fresh metadata cache, as a clean CI runner does.
+  writeFileSync(
+    join(consumerDirectory, "package.json"),
+    JSON.stringify({ private: true, type: "module" }),
+  );
+
+  // Resolve published dependencies without this checkout's cached registry metadata.
   run("pnpm", [
     "add",
     "--cache-dir",
-    join(consumer, "cache"),
+    join(consumerDirectory, "cache"),
     "--ignore-scripts",
-    join(consumer, archive),
+    join(consumerDirectory, archive),
   ]);
-  const installed = join(consumer, "node_modules/webmcp-polyfill");
-  const files = readdirSync(installed, {
+
+  const installedPackage = join(consumerDirectory, "node_modules/webmcp-polyfill");
+  const files = readdirSync(installedPackage, {
     recursive: true,
     withFileTypes: true,
   })
     .filter((entry) => entry.isFile())
-    .map((entry) => relative(installed, join(entry.parentPath, entry.name)).replaceAll("\\", "/"))
+    .map((entry) => {
+      const path = relative(installedPackage, join(entry.parentPath, entry.name));
+      return path.replaceAll("\\", "/");
+    })
     .sort();
   assert.deepEqual(files, [
     "LICENSE",
@@ -44,30 +48,38 @@ try {
     "package.json",
   ]);
   assert.match(
-    readFileSync(join(installed, "dist/polyfill.js"), "utf8"),
+    readFileSync(join(installedPackage, "dist/polyfill.js"), "utf8"),
     /SPDX-License-Identifier: MIT/,
     "dist/polyfill.js lost its licence banner: check esbuild's --legal-comments=inline",
   );
-  // Compile an auto-only consumer: source files in this checkout cannot supply
-  // missing ambient declarations or mask broken package exports.
+
+  // Compile outside this checkout so its source files cannot mask missing public types.
   writeFileSync(
-    join(consumer, "consumer.ts"),
+    join(consumerDirectory, "consumer.ts"),
     `
     import 'webmcp-polyfill/auto';
+
     const context: WebMCP.ModelContext | undefined = document.modelContext;
-    void context?.registerTool({ name: 'typed', description: 'Typed',
-      inputSchema: { type: 'object', properties: { count: { type: 'number' } }, required: ['count'] },
+    void context?.registerTool({
+      name: 'typed',
+      description: 'Typed',
+      inputSchema: {
+        type: 'object',
+        properties: { count: { type: 'number' } },
+        required: ['count'],
+      },
       execute(input) {
         const count: number = input.count;
-        // @ts-expect-error inferred count must not become any
+        // @ts-expect-error The schema infers count as a number.
         const invalid: string = input.count;
         return { count };
       },
     });
+
     async function invoke(context: WebMCP.ModelContext) {
       const [tool] = await context.getTools();
       const result: string = await context.executeTool(tool, { count: 1 });
-      // @ts-expect-error legacy JSON-string input is not supported
+      // @ts-expect-error The current draft accepts objects, not serialized JSON.
       await context.executeTool(tool, '{}');
       return result;
     }
@@ -78,7 +90,7 @@ try {
     ["ESNext", "Bundler"],
   ]) {
     run(process.execPath, [
-      join(root, "node_modules/typescript/bin/tsc"),
+      join(packageDirectory, "node_modules/typescript/bin/tsc"),
       "--strict",
       "--noEmit",
       "--target",
@@ -90,14 +102,27 @@ try {
       "consumer.ts",
     ]);
   }
+
   run(process.execPath, [
     "--input-type=module",
     "-e",
-    "import { installWebMCP } from 'webmcp-polyfill'; import 'webmcp-polyfill/auto'; installWebMCP();",
+    `
+      import { installWebMCP } from 'webmcp-polyfill';
+      import 'webmcp-polyfill/auto';
+      installWebMCP();
+    `,
   ]);
   console.log(
     "Packed consumer: public types, inference, SSR imports, and package contents passed.",
   );
 } finally {
-  rmSync(consumer, { recursive: true, force: true });
+  rmSync(consumerDirectory, { recursive: true, force: true });
+}
+
+function run(command, args, cwd = consumerDirectory) {
+  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
+  if (result.error) {
+    throw result.error;
+  }
+  assert.equal(result.status, 0, `${command} ${args.join(" ")} failed`);
 }
