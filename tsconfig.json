@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "lib": ["ESNext", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "declaration": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": [],
+    "verbatimModuleSyntax": true
+  },
+  "files": ["src/index.ts", "src/auto.ts"]
+}
