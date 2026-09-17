@@ -83,7 +83,13 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
   readonly #tools = new Map<string, StoredTool>();
   #toolchangeHandler: WebMCP.ModelContext["ontoolchange"] = null;
   readonly #toolchangeListener = (event: Event): void => {
-    this.#toolchangeHandler?.call(this, event);
+    const handler = this.#toolchangeHandler;
+    if (handler) {
+      const result = Reflect.apply(handler, this, [event]);
+      if (result === false) {
+        Event.prototype.preventDefault.call(event);
+      }
+    }
   };
 
   constructor(owner: Document) {
@@ -135,10 +141,7 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     if (!description) {
       throw new NativeDOMException("A tool description cannot be empty", "InvalidStateError");
     }
-    let serializedSchema: string | undefined;
-    if (inputSchema !== undefined) {
-      serializedSchema = serializeJSON(inputSchema);
-    }
+    const serializedSchema = inputSchema === undefined ? undefined : serializeJSON(inputSchema);
     registrationSignal?.throwIfAborted();
     rejectUnsupportedOrigins(exposedTo);
 
@@ -362,10 +365,7 @@ function readToolDefinition(value: unknown) {
   const inputSchema = readInputSchema(descriptor.inputSchema);
   const name = toDOMString(requireMember(descriptor.name, "name"));
   const rawTitle = descriptor.title;
-  let title = "";
-  if (rawTitle !== undefined) {
-    title = toDOMString(rawTitle).toWellFormed();
-  }
+  const title = rawTitle === undefined ? "" : toDOMString(rawTitle).toWellFormed();
 
   return { name, title, description, annotations, inputSchema, execute };
 }
@@ -499,14 +499,17 @@ function readOriginSequence(value: unknown): string[] {
   if (typeof getIterator !== "function") {
     throw new TypeError("Origins must be a sequence");
   }
-  // Preserve the receiver without reading author-defined call or bind properties.
-  const iterate = Function.prototype.call.bind(getIterator, value);
-  const iterable = { [Symbol.iterator]: iterate };
+  // Use the cached method and original receiver without reading the method's own properties.
+  const iterable = {
+    [Symbol.iterator]() {
+      return Reflect.apply(getIterator, value, []);
+    },
+  };
   return Array.from(iterable, (origin) => toDOMString(origin).toWellFormed());
 }
 
 // Validate before refusing cross-document support, preserving SecurityError precedence.
-// ponytail: scheme/host approximation; use native origin checks for full conformance.
+// Scheme and host checks cannot recognize browser-specific trusted origins.
 function rejectUnsupportedOrigins(origins: string[]): void {
   for (const origin of origins) {
     let url = URL.parse(origin);
@@ -553,13 +556,9 @@ function requireActiveWindow(owner: Document): Window {
 
 function requireToolsPermission(owner: Document, view: Window): void {
   // Query the policy only if the browser recognizes the tools feature.
-  let policy: unknown;
-  if ("permissionsPolicy" in owner) {
-    policy = owner.permissionsPolicy;
-  }
-  if (policy == null && "featurePolicy" in owner) {
-    policy = owner.featurePolicy;
-  }
+  const policy =
+    ("permissionsPolicy" in owner ? owner.permissionsPolicy : undefined) ??
+    ("featurePolicy" in owner ? owner.featurePolicy : undefined);
   if (
     isObject(policy) &&
     "features" in policy &&
@@ -573,7 +572,7 @@ function requireToolsPermission(owner: Document, view: Window): void {
     }
     return;
   }
-  // ponytail: same-origin fallback; native policy support is needed to honor allowlists.
+  // Same-origin access approximates the default policy; explicit allowlists need native support.
   try {
     void view.parent.document;
   } catch {
@@ -584,7 +583,7 @@ function requireToolsPermission(owner: Document, view: Window): void {
   }
 }
 
-// ponytail: timer tasks; exact WebMCP scheduling and navigation cleanup need native support.
+// Timers approximate the WebMCP task source; navigation cleanup requires native support.
 function queueTask(callback: () => void): void {
   setTimeout(callback, 0);
 }

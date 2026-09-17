@@ -571,6 +571,36 @@ test("queues toolchange and resolves registration after notification; abort unre
   });
 });
 
+test("ontoolchange ignores a handler's own call property", async ({ page }) => {
+  await page.addScriptTag({ url: "/auto.js" });
+  const events = await page.evaluate(async () => {
+    const context = document.modelContext!;
+    const notifications: string[] = [];
+    context.ontoolchange = function (event) {
+      notifications.push(this === context ? event.type : "wrong receiver");
+    };
+    Object.defineProperty(context.ontoolchange, "call", { value: null });
+
+    await context.registerTool({ name: "event", description: "Event", execute: () => null });
+    return notifications;
+  });
+
+  expect(events).toEqual(["toolchange"]);
+});
+
+test("returning false from ontoolchange cancels a cancelable event", async ({ page }) => {
+  await page.addScriptTag({ url: "/auto.js" });
+  const outcome = await page.evaluate(() => {
+    const context = document.modelContext!;
+    context.ontoolchange = () => false;
+    const event = new Event("toolchange", { cancelable: true });
+    const dispatched = context.dispatchEvent(event);
+    return { dispatched, defaultPrevented: event.defaultPrevented };
+  });
+
+  expect(outcome).toEqual({ dispatched: false, defaultPrevented: true });
+});
+
 test("preserves event-handler listener order when the handler is replaced", async ({ page }) => {
   await page.addScriptTag({ url: "/auto.js" });
   const outcome = await page.evaluate(async () => {
