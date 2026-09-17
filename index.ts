@@ -135,7 +135,10 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     if (!description) {
       throw new NativeDOMException("A tool description cannot be empty", "InvalidStateError");
     }
-    const serializedSchema = inputSchema === undefined ? undefined : serializeJSON(inputSchema);
+    let serializedSchema: string | undefined;
+    if (inputSchema !== undefined) {
+      serializedSchema = serializeJSON(inputSchema);
+    }
     registrationSignal?.throwIfAborted();
     rejectUnsupportedOrigins(exposedTo);
 
@@ -359,7 +362,10 @@ function readToolDefinition(value: unknown) {
   const inputSchema = readInputSchema(descriptor.inputSchema);
   const name = toDOMString(requireMember(descriptor.name, "name"));
   const rawTitle = descriptor.title;
-  const title = rawTitle === undefined ? "" : toDOMString(rawTitle).toWellFormed();
+  let title = "";
+  if (rawTitle !== undefined) {
+    title = toDOMString(rawTitle).toWellFormed();
+  }
 
   return { name, title, description, annotations, inputSchema, execute };
 }
@@ -547,9 +553,13 @@ function requireActiveWindow(owner: Document): Window {
 
 function requireToolsPermission(owner: Document, view: Window): void {
   // Query the policy only if the browser recognizes the tools feature.
-  const policy =
-    ("permissionsPolicy" in owner ? owner.permissionsPolicy : undefined) ??
-    ("featurePolicy" in owner ? owner.featurePolicy : undefined);
+  let policy: unknown;
+  if ("permissionsPolicy" in owner) {
+    policy = owner.permissionsPolicy;
+  }
+  if (policy == null && "featurePolicy" in owner) {
+    policy = owner.featurePolicy;
+  }
   if (
     isObject(policy) &&
     "features" in policy &&
