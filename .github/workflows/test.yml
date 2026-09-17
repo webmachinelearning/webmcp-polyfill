@@ -42,10 +42,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Read WPT revision
+        id: wpt
+        run: echo "revision=$(cat wpt-revision.txt)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: web-platform-tests/wpt
-          ref: 1a21db90adf8a264370ad806ed761f39e1d435a0
+          ref: ${{ steps.wpt.outputs.revision }}
           path: .reference/wpt
           persist-credentials: false
           sparse-checkout: |

@@ -1,12 +1,5 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "noEmit": true, "types": ["node"], "noUncheckedSideEffectImports": true },
-  "files": [
-    "index.test-d.ts",
-    "index.test.ts",
-    "execute.test.ts",
-    "app.test.ts",
-    "native.test.ts",
-    "playwright.config.ts"
-  ]
+  "include": ["*.test.ts", "*.test-d.ts", "playwright.config.ts"]
 }

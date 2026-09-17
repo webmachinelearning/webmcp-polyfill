@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import "./index.js";
+import type {} from "./index.js";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -128,7 +128,7 @@ test("a signal option that is not an AbortSignal is rejected", async ({ page }) 
       const context = document.modelContext!;
       const results: [string, string][] = [];
       const tool = { name: "x", description: "X", execute: () => null };
-      for (const signal of [1, {}, null, "abort"] as unknown[]) {
+      for (const signal of [1, {}, null, "abort"]) {
         const label = JSON.stringify(signal)!;
         try {
           // @ts-expect-error Exercise invalid JavaScript callers at the Web IDL boundary.

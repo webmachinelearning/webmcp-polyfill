@@ -25,7 +25,7 @@ function isObject(value: unknown): value is object {
 function dictionary(value: unknown): Record<PropertyKey, unknown> {
   if (value == null) return {};
   if (!isObject(value)) throw new TypeError("Expected a dictionary");
-  // Dictionary members remain unknown until converted.
+  // SAFETY: the object check permits property reads; each member still needs conversion.
   return value as Record<PropertyKey, unknown>;
 }
 
@@ -57,7 +57,8 @@ function serialize(value: unknown): string {
 }
 
 function signalOption(value: unknown): AbortSignal | undefined {
-  // Native brand check across realms; composition survives stopImmediatePropagation().
+  // SAFETY: any() validates the native brand across realms before we use the signal.
+  // Composition also survives stopImmediatePropagation() on the original signal.
   return value === undefined ? undefined : AbortSignal.any([value as AbortSignal]);
 }
 
@@ -77,14 +78,10 @@ function originSequence(value: unknown): string[] {
 // ponytail: scheme/host approximation; use native origin checks for full conformance.
 function rejectUnsupportedOrigins(origins: string[]): void {
   for (const origin of origins) {
-    let url: URL;
-    try {
-      url = new URL(origin);
-      // blob: URLs inherit their origin's scheme and host.
-      if (url.origin !== "null") url = new URL(url.origin);
-    } catch {
-      throw new NativeDOMException("Invalid origin", "SecurityError");
-    }
+    let url = URL.parse(origin);
+    if (!url) throw new NativeDOMException("Invalid origin", "SecurityError");
+    // blob: URLs inherit their origin's scheme and host.
+    if (url.origin !== "null") url = new URL(url.origin);
     const local =
       url.hostname === "[::1]" ||
       // URL canonicalizes numeric hosts; exclude domains such as 127.example.test.
@@ -180,7 +177,7 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     const description = domString(required(descriptor.description, "description"));
     const callback = required(descriptor.execute, "execute");
     if (typeof callback !== "function") throw new TypeError("execute must be a function");
-    // Callability is checked here; inputs and results are converted at invocation.
+    // SAFETY: callability is checked above; inputs and results are converted at invocation.
     const execute = callback as WebMCP.ToolExecuteCallback<object>;
     const inputSchema = descriptor.inputSchema;
     if (inputSchema !== undefined && !isObject(inputSchema))
@@ -282,13 +279,8 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     windowGetter!.call(target);
     const signal = signalOption(dictionary(options).signal);
     activeView(this.#owner);
-    let expectedOrigin = "null";
-    try {
-      expectedOrigin = new URL(origin).origin;
-    } catch {
-      // An unparseable origin falls through to the opaque check below.
-    }
-    if (expectedOrigin === "null") {
+    const expectedOrigin = URL.parse(origin)?.origin;
+    if (!expectedOrigin || expectedOrigin === "null") {
       throw new NativeDOMException("Invalid or opaque origin", "NotSupportedError");
     }
     if (!isObject(inputObject)) throw new TypeError("inputObject must be an object");
@@ -380,10 +372,19 @@ Object.defineProperties(ModelContextPolyfill.prototype, {
 });
 
 /**
- * Install WebMCP in this secure document's realm, preserving any existing implementation.
- * Safe to call repeatedly or outside a browser. Each frame installs separately.
+ * Install document-local WebMCP in the current window.
  *
- * @throws {TypeError} when the realm cannot be extended, rather than installing halfway.
+ * Does nothing outside a secure browser context or when `document.modelContext`
+ * already exists, including partial native implementations. Call before registering
+ * tools in each frame; repeated calls preserve existing contexts and registrations.
+ *
+ * @throws {TypeError} If the window or Document prototype prevents installation.
+ * @example
+ * import { installWebMCP } from "webmcp-polyfill";
+ * installWebMCP();
+ *
+ * @see https://webmachinelearning.github.io/webmcp/#document-extension
+ * @see https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md
  */
 export function installWebMCP(): void {
   if (typeof document === "undefined" || !globalThis.isSecureContext || "modelContext" in document)

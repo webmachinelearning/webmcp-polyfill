@@ -9,7 +9,7 @@ const chrome = process.env.CHROME_BIN;
 if (!root || !chrome)
   throw new Error("Set WPT_ROOT to a WPT checkout and CHROME_BIN to Chrome Canary");
 
-const revision = "1a21db90adf8a264370ad806ed761f39e1d435a0";
+const revision = readFileSync(new URL("./wpt-revision.txt", import.meta.url), "utf8").trim();
 const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
 if (head.error) throw head.error;
 if (head.status !== 0 || head.stdout.trim() !== revision) {

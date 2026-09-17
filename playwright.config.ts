@@ -1,7 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  testMatch: /(?:index|execute|app)\.test\.ts$/,
+  testMatch: "**/*.test.ts",
+  testIgnore: "**/native.test.ts",
   forbidOnly: !!process.env.CI,
   fullyParallel: true,
   workers: 3,
@@ -25,6 +26,7 @@ export default defineConfig({
     {
       name: "native-chromium",
       testMatch: "native.test.ts",
+      testIgnore: [],
       use: {
         browserName: "chromium",
         launchOptions: { args: ["--enable-experimental-web-platform-features"] },

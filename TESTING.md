@@ -15,6 +15,8 @@ pnpm test:package
 Tests load the built bundle from a real server in Chromium, Firefox, and WebKit.
 Chromium runs with native WebMCP disabled; a separate native Chromium test checks
 that installation preserves its context and registered tools.
+New root-level `*.test.ts` files are discovered and type-checked automatically.
+`native.test.ts` runs only in the native Chromium project.
 
 | File               | Coverage                                                                                    |
 | ------------------ | ------------------------------------------------------------------------------------------- |
@@ -35,6 +37,7 @@ provides engine coverage; it is not Safari.
 
 Use Python 3.11+, Chrome Canary, and a clean WPT checkout at
 [`1a21db90adf8a264370ad806ed761f39e1d435a0`](https://github.com/web-platform-tests/wpt/commit/1a21db90adf8a264370ad806ed761f39e1d435a0).
+CI and the local runner both read the pin from `wpt-revision.txt`.
 A sparse checkout needs `common`, `docs`, `interfaces`, `resources`, `tools`,
 and `webmcp`, plus the root files. CI includes the checkout recipe.
 
@@ -116,5 +119,6 @@ When updating the draft or WPT pin, compare the
 [upstream tests](https://github.com/web-platform-tests/wpt/tree/master/webmcp), and
 [types](https://github.com/webmachinelearning/webmcp-types).
 Use [Blink source](https://chromium.googlesource.com/chromium/src/+/main/third_party/blink/renderer/core/script_tools/)
-for Chromium-specific details. Review every changed expectation, update both the
-runner and CI pin, and record browser versions and results separately.
+for Chromium-specific details. Review every changed expectation, update
+`wpt-revision.txt` and the runner's coverage counts, and record browser versions
+and results separately.

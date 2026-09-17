@@ -1,15 +1,15 @@
 import { test, expect } from "@playwright/test";
-import "./index.js";
+import type {} from "./index.js";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
   expect(await page.evaluate(() => "modelContext" in document)).toBe(false);
+  await page.addScriptTag({ url: "/auto.js" });
 });
 
 test("ignores late results after cancellation, including serialization side effects", async ({
   page,
 }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
@@ -45,22 +45,19 @@ test("ignores late results after cancellation, including serialization side effe
 });
 
 test("concurrent calls to the same tool have independent cancellation", async ({ page }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
       const signals: AbortSignal[] = [];
       const { promise: bothStarted, resolve: start } = Promise.withResolvers<void>();
-      let finish!: (value: object) => void;
+      const { promise: completion, resolve: finish } = Promise.withResolvers<object>();
       await context.registerTool({
         name: "concurrent",
         description: "Concurrent",
         execute(_, { signal }) {
           signals.push(signal);
           if (signals.length === 2) start();
-          return new Promise<object>((resolve) => {
-            finish = resolve;
-          });
+          return completion;
         },
       });
       const [tool] = await context.getTools();
@@ -86,7 +83,6 @@ test("concurrent calls to the same tool have independent cancellation", async ({
 });
 
 test("executes copied object and array inputs with a fresh callback signal", async ({ page }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       "use strict";
@@ -116,7 +112,6 @@ test("executes copied object and array inputs with a fresh callback signal", asy
 });
 
 test("rejects legacy JSON strings and preserves input serialization errors", async ({ page }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
@@ -153,7 +148,6 @@ test("serializes results as JSON and rejects callback or serialization failures"
 }) => {
   const pageErrors: Error[] = [];
   page.on("pageerror", (error) => pageErrors.push(error));
-  await page.addScriptTag({ url: "/auto.js" });
   const results = await page.evaluate(async () => {
     const context = document.modelContext!;
     const circular = {};
@@ -195,7 +189,6 @@ test("serializes results as JSON and rejects callback or serialization failures"
 test("cancels the caller immediately and sends a default AbortError to the callback", async ({
   page,
 }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
@@ -232,21 +225,18 @@ test("cancels the caller immediately and sends a default AbortError to the callb
 });
 
 test("unregistration leaves an already-running invocation alive", async ({ page }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
       const registration = new AbortController();
-      const { promise: started, resolve: entered } = Promise.withResolvers<void>();
+      const { promise: started, resolve: entered } = Promise.withResolvers<AbortSignal>();
       const { promise: completion, resolve: complete } = Promise.withResolvers<string>();
-      let callbackSignal!: AbortSignal;
       await context.registerTool(
         {
           name: "pending",
           description: "Pending",
           execute(_input, { signal }) {
-            callbackSignal = signal;
-            entered();
+            entered(signal);
             return completion;
           },
         },
@@ -254,7 +244,7 @@ test("unregistration leaves an already-running invocation alive", async ({ page 
       );
       const [tool] = await context.getTools();
       const pending = context.executeTool(tool, {});
-      await started;
+      const callbackSignal = await started;
       registration.abort();
       const count = (await context.getTools()).length;
       complete("finished");
@@ -267,7 +257,6 @@ test("unregistration leaves an already-running invocation alive", async ({ page 
 test("aborting before the dispatch task rejects without starting the callback", async ({
   page,
 }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
@@ -293,7 +282,6 @@ test("aborting before the dispatch task rejects without starting the callback", 
 });
 
 test("execution converts every descriptor member before invoking the tool", async ({ page }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   const result = await page.evaluate(async () => {
     const context = document.modelContext!;
     let calls = 0;
@@ -393,7 +381,6 @@ test("execution converts every descriptor member before invoking the tool", asyn
 });
 
 test("a tool belonging to another window cannot be executed", async ({ page }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
@@ -419,7 +406,6 @@ test("a tool belonging to another window cannot be executed", async ({ page }) =
 test("descriptor origins are parsed, and a mismatch fails like a missing tool", async ({
   page,
 }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
@@ -449,14 +435,13 @@ test("descriptor origins are parsed, and a mismatch fails like a missing tool", 
 });
 
 test("a signal option that is not an AbortSignal is rejected", async ({ page }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
       await context.registerTool({ name: "x", description: "X", execute: () => null });
       const [tool] = await context.getTools();
       const results: [string, string][] = [];
-      for (const signal of [1, {}, null, "abort"] as unknown[]) {
+      for (const signal of [1, {}, null, "abort"]) {
         const label = JSON.stringify(signal)!;
         try {
           // @ts-expect-error Exercise invalid JavaScript callers at the Web IDL boundary.
@@ -478,7 +463,6 @@ test("a signal option that is not an AbortSignal is rejected", async ({ page }) 
 });
 
 test("unregistering before dispatch rejects without running the callback", async ({ page }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;
@@ -497,7 +481,6 @@ test("unregistering before dispatch rejects without running the callback", async
 });
 
 test("input that serializes to a non-object rejects before the callback runs", async ({ page }) => {
-  await page.addScriptTag({ url: "/auto.js" });
   expect(
     await page.evaluate(async () => {
       const context = document.modelContext!;

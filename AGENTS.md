@@ -9,8 +9,8 @@ compatibility belongs here.
 
 1. Read the live [Community Group draft](https://webmachinelearning.github.io/webmcp/)
    and the diff from the source revision recorded in TESTING.md.
-2. Read the relevant upstream WPT, including its helpers and IDL. The pin and
-   exact selection are in `wpt.mjs`; known disagreements are in TESTING.md.
+2. Read the relevant upstream WPT, including its helpers and IDL. The pin is in
+   `wpt-revision.txt`, selection in `wpt.mjs`, and disagreements in TESTING.md.
 3. Check browser evidence using the source map in TESTING.md. A Chromium test,
    browser issue, or standards-position discussion alone is not the specification.
 4. Add the smallest real-browser regression that demonstrates the behavior.
@@ -26,8 +26,8 @@ driver must fail its project, never become a skipped test. Do not count an
 excluded test as a pass, and do not add compatibility behavior only to satisfy
 one.
 
-When moving the WPT pin, read the upstream diff first, update both `wpt.mjs` and
-the CI pin, and inspect every changed assertion and expectation. Do not
+When moving `wpt-revision.txt`, read the upstream diff first, update the coverage
+counts in `wpt.mjs`, and inspect every changed assertion and expectation. Do not
 regenerate failure metadata without reading each one. In the pull request
 description, record the draft and WPT revisions, browser versions, passes,
 expected failures, and excluded behavior separately. Keep upstream tests
