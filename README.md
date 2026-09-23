@@ -11,11 +11,11 @@ pnpm install
 pnpm build
 ```
 
-Then install the checkout in your app with `pnpm add /path/to/webmcp-polyfill`. For a classic script, serve the built `dist/polyfill.js`.
+Then install the checkout in your app with `pnpm add /path/to/webmcp-polyfill`.
 
 ## Usage
 
-Serve your page over HTTPS, or localhost HTTP for development. Operations reject where the browser reports that origin-keyed agent clustering is off; current Chrome enables it by default, so an `Origin-Agent-Cluster: ?1` header is optional.
+Use HTTPS or localhost. Some browsers need an `Origin-Agent-Cluster: ?1` header; current Chrome enables origin keying by default.
 
 Load the polyfill before registering tools:
 
@@ -52,11 +52,38 @@ console.log(result);
 registration.abort();
 ```
 
-For explicit installation, import and call `installWebMCP` from `webmcp-polyfill`. It is safe to call repeatedly and during server-side rendering. Existing `document.modelContext` implementations are preserved, including partial native implementations. Each frame installs separately.
+For explicit installation, call `installWebMCP()` from `webmcp-polyfill`. Repeated calls are safe. Both entry points preserve existing native contexts, including partial implementations.
+
+### Script tag
+
+Serve the built `dist/polyfill.js` before your app:
+
+```html
+<script src="/assets/polyfill.js"></script>
+<script src="/assets/app.js"></script>
+```
+
+This standalone IIFE installs `document.modelContext` automatically.
+
+### Next.js
+
+In Next.js 15.3+, add this to `instrumentation-client.ts` beside `app` (or `src/instrumentation-client.ts` beside `src/app`):
+
+```ts
+import "webmcp-polyfill/auto";
+```
+
+Next.js runs [client instrumentation](https://nextjs.org/docs/app/api-reference/file-conventions/instrumentation-client) before hydration. A Server Component import alone won't install the polyfill in the browser.
+
+Configure `Origin-Agent-Cluster` through Next.js [`headers()`](https://nextjs.org/docs/app/api-reference/config/next-config-js/headers) if your browser needs it.
+
+Both entry points are SSR-safe: installation does nothing without a document. Your pages can stay server-rendered; WebMCP runs in the browser.
+
+The package needs no `"use client"` directive. Use it on your [Client Components](https://nextjs.org/docs/app/api-reference/directives/use-client) and access `document.modelContext` in effects or event handlers. Pass an `AbortSignal` when registering in an effect, then abort it during cleanup.
 
 ## Frames
 
-Load the polyfill in each participating frame. Tools in same-origin frames are visible by default, including tools in parents and siblings. Tools with the same name in different frames remain separate; pass the discovered descriptor to `executeTool()` so it reaches the correct owner.
+Load the polyfill in each frame. Same-origin tools are visible by default, including those in parents and siblings. Pass the discovered descriptor to `executeTool()` so names shared by different frames reach the correct owner.
 
 For cross-origin tools, delegate the `tools` permission on the iframe, register the tool with `exposedTo: [callerOrigin]`, and discover it with `getTools({ fromOrigins: [toolOrigin] })`. Same-origin tools are still included in that result.
 
@@ -64,27 +91,21 @@ For cross-origin tools, delegate the `tools` permission on the iframe, register 
 <iframe src="https://tools.example/app" allow="tools https://tools.example"></iframe>
 ```
 
-Installing the polyfill announces the frame to the rest of its frame tree with `webmcp-polyfill:` string messages. Initial discovery waits up to 500 ms for existing frames to answer. Frames without the polyfill can ignore the announcements; they receive no subsequent requests.
-
-Execution and cancellation use authenticated `MessageChannel` connections. Tool callbacks run in their owning frame. A caller's abort reason stays with the caller; the callback receives a separate signal with a default `AbortError`.
+Initial discovery waits up to 500 ms for existing frames. Requests use `MessageChannel` after checking the peer's source and origin; callbacks run in their owning frame. Cancellation preserves the caller's reason and sends the callback a default `AbortError`.
 
 ## Implementation status
 
-The current target is the surface published by `webmcp-types@0.1.9`: registration, discovery, execution, cancellation, and `toolchange`, including frame exposure and origin filtering. Declarative forms and the newer `toolactivated`/`toolcancel` events are not implemented. Browser agent integration requires browser support.
+The target is `webmcp-types@0.1.9`: registration, discovery, execution, cancellation, and `toolchange`, including frame exposure and origin filtering. Declarative forms and `toolactivated`/`toolcancel` are not implemented. Browser agent integration requires browser support.
 
-Native contexts do not join the polyfill's channels. Permissions Policy and some frame lifecycle behavior have browser-dependent limits; see the [documented limitations](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md#draft-alignment-and-limitations).
+Native contexts do not join the polyfill's channels. See [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) for policy and frame limitations, results, commands, and tracked revisions.
 
 `executeTool()` accepts an object and returns a JSON-serialized result. Omitted or `undefined` input defaults to a fresh empty object. Callbacks must validate their inputs; schema inference provides TypeScript checks only.
-
-The implementation tracks the [Community Group draft](https://webmachinelearning.github.io/webmcp/). [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) records the draft and WPT revisions, test coverage, and known limitations.
 
 Breaking API changes ship with notes: in minor releases while the version is 0.x, in majors after 1.0.
 
 ## Development
 
-`src/` contains the polyfill and its automatic entry point. `tests/` contains the browser and package checks with their fixtures. `wpt/` contains the upstream test runner, pinned revision, and expectations.
-
-See [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) for browser setup and test commands.
+`src/` holds the polyfill, `tests/` the browser and package checks, and `wpt/` the upstream runner, pin, and expectations.
 
 ## License
 

@@ -30,7 +30,7 @@ export default defineConfig({
       testIgnore: [],
       use: {
         browserName: "chromium",
-        launchOptions: { args: ["--enable-blink-features=WebMCP"] },
+        launchOptions: { args: ["--enable-features=WebMCP"] },
       },
     },
   ],
