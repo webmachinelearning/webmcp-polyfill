@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node", "webmcp-types"],
+    "allowJs": true,
+    "checkJs": true,
+    "erasableSyntaxOnly": true,
+    "noUncheckedSideEffectImports": true
+  },
+  "include": ["tests/**/*.ts", "tests/**/*.js", "wpt/*.ts", "playwright.config.ts"]
+}
