@@ -1,0 +1,45 @@
+{
+  "name": "webmcp-polyfill",
+  "version": "0.1.0",
+  "description": "A polyfill for WebMCP",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/webmachinelearning/webmcp-polyfill.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": [
+    "./dist/auto.js"
+  ],
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./auto": "./dist/auto.js"
+  },
+  "scripts": {
+    "build": "tsc && esbuild src/auto.ts --bundle --format=iife --target=es2022 --minify --legal-comments=inline --outfile=dist/polyfill.js",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "pnpm lint && pnpm build && pnpm typecheck && playwright test",
+    "test:wpt": "pnpm build && node wpt/run.ts",
+    "prepack": "pnpm build",
+    "test:package": "node tests/package.test.ts",
+    "lint": "oxlint --deny-warnings"
+  },
+  "dependencies": {
+    "webmcp-types": "^0.1.9"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.13.4",
+    "esbuild": "^0.25.0",
+    "oxlint": "1.82.0",
+    "typescript": "^5.9.0"
+  },
+  "packageManager": "pnpm@10.14.0",
+  "pnpm": {
+    "onlyBuiltDependencies": []
+  }
+}

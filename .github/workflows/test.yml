@@ -1,0 +1,105 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm install --global pnpm@10.14.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm test
+      - run: pnpm test:package
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: browser-tests
+          path: playwright-report/
+          retention-days: 7
+
+  wpt:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, firefox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Read WPT revision
+        id: wpt
+        run: echo "revision=$(cat wpt/revision.txt)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: web-platform-tests/wpt
+          ref: ${{ steps.wpt.outputs.revision }}
+          path: .reference/wpt
+          persist-credentials: false
+          sparse-checkout: |
+            common
+            docs
+            interfaces
+            resources
+            tools
+            webmcp
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: npm install --global pnpm@10.14.0
+      - run: pnpm install --frozen-lockfile
+      - name: Install browser dependencies
+        run: pnpm exec playwright install-deps chromium firefox
+      - uses: browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd
+        if: matrix.browser == 'chrome'
+        id: chrome
+        with:
+          chrome-version: canary
+      - name: Allow Chrome to create its sandbox
+        if: matrix.browser == 'chrome'
+        env:
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          sudo tee /etc/apparmor.d/webmcp-chrome >/dev/null <<EOF
+          abi <abi/4.0>,
+          profile webmcp-chrome "$CHROME_BIN" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/webmcp-chrome
+      - name: Install Firefox certificate tools
+        if: matrix.browser == 'firefox'
+        run: sudo apt-get install -y libnss3-tools
+      - run: pnpm test:wpt
+        env:
+          WPT_ROOT: .reference/wpt
+          WPT_BROWSER: ${{ matrix.browser }}
+          CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: wpt-results-${{ matrix.browser }}
+          path: wpt-results/
+          retention-days: 7
