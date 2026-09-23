@@ -4,8 +4,8 @@
 
 **226 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
 Playwright WebKit 26.6. Package checks also pass: imports, types, SSR, and tarball contents.
-CI runs these checks plus WPT in Chrome and Firefox. Actual Safari was tested locally;
-Playwright WebKit is a separate build.
+CI runs these checks plus WPT in Chrome, Firefox, and actual Safari. Safari runs on
+`macos-26`; Playwright WebKit is a separate build.
 
 WPT covers **all 67 WebMCP testharness files, 161 subtests**, with zero unexpected results:
 

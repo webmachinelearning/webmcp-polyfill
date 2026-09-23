@@ -36,11 +36,18 @@ jobs:
           retention-days: 7
 
   wpt:
+    name: wpt (${{ matrix.browser }})
     strategy:
       fail-fast: false
       matrix:
-        browser: [chrome, firefox]
-    runs-on: ubuntu-latest
+        include:
+          - browser: chrome
+            os: ubuntu-latest
+          - browser: firefox
+            os: ubuntu-latest
+          - browser: safari
+            os: macos-26
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -71,6 +78,7 @@ jobs:
       - run: npm install --global pnpm@10.14.0
       - run: pnpm install --frozen-lockfile
       - name: Install browser dependencies
+        if: runner.os == 'Linux'
         run: pnpm exec playwright install-deps chromium firefox
       - uses: browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd
         if: matrix.browser == 'chrome'
@@ -92,6 +100,11 @@ jobs:
       - name: Install Firefox certificate tools
         if: matrix.browser == 'firefox'
         run: sudo apt-get install -y libnss3-tools
+      - name: Configure Safari
+        if: matrix.browser == 'safari'
+        run: |
+          sudo safaridriver --enable
+          python .reference/wpt/wpt make-hosts-file | sudo tee -a /etc/hosts
       - run: pnpm test:wpt
         env:
           WPT_ROOT: .reference/wpt
