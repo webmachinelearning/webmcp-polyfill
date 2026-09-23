@@ -13,5 +13,5 @@
     "types": [],
     "verbatimModuleSyntax": true
   },
-  "files": ["src/index.ts", "src/auto.ts"]
+  "files": ["src/index.ts", "src/auto.ts", "src/frames.ts"]
 }
