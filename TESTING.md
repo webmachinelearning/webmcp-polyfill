@@ -72,7 +72,7 @@ and `webmcp-types@0.1.9`.
   (`toolactivated`/`toolcancel`, their handlers, and `ToolActivatedEvent`/`ToolCancelEvent`)
   are not implemented.
 - **Draft differences:** results are JSON-serialized; some pinned tests expect raw
-  strings. Omitted or `undefined` input becomes `{}`; `null` and primitives reject.
+  strings.
 - **Timing:** MessagePorts approximate native task ordering. Aborting before
   dispatch skips the callback; the draft dispatches and then aborts its signal.
   Delegated permission checks are asynchronous, so argument errors can precede
