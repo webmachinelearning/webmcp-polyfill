@@ -194,6 +194,44 @@ test("rejects legacy JSON strings and preserves input serialization errors", asy
   expect(outcome).toEqual(["TypeError", "TypeError", "TypeError", "RangeError"]);
 });
 
+test("a non-object input rejects after the tool is converted and before options are read", async ({
+  page,
+}) => {
+  const outcome = await page.evaluate(async () => {
+    const context = document.modelContext!;
+
+    await context.registerTool({ name: "x", description: "X", execute: () => null });
+
+    const tool = (await context.getTools())[0]!;
+    const reads: string[] = [];
+    const descriptor = {
+      ...tool,
+      get name() {
+        reads.push("tool");
+        return tool.name;
+      },
+    };
+    const options = {
+      get signal() {
+        reads.push("options");
+        return undefined;
+      },
+    };
+    try {
+      // @ts-expect-error Exercise a null input from JavaScript callers.
+      await context.executeTool(descriptor, null, options);
+      return { error: "resolved", reads };
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+      return { error: error.name, reads };
+    }
+  });
+
+  expect(outcome).toEqual({ error: "TypeError", reads: ["tool"] });
+});
+
 test("serializes results as JSON and rejects callback or serialization failures", async ({
   page,
 }) => {
