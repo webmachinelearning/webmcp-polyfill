@@ -42,6 +42,8 @@ try {
     "README.md",
     "dist/auto.d.ts",
     "dist/auto.js",
+    "dist/declarative.d.ts",
+    "dist/declarative.js",
     "dist/events.d.ts",
     "dist/events.js",
     "dist/frames.d.ts",
@@ -49,6 +51,8 @@ try {
     "dist/index.d.ts",
     "dist/index.js",
     "dist/polyfill.js",
+    "dist/tools.d.ts",
+    "dist/tools.js",
     "package.json",
   ]);
   assert.match(

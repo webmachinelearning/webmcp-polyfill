@@ -1,5 +1,16 @@
 import { test, expect } from "@playwright/test";
 
+// The realm members that installation would define or replace.
+const realmMembers = () =>
+  [
+    Object.getOwnPropertyDescriptor(SubmitEvent.prototype, "agentInvoked")?.get,
+    Object.getOwnPropertyDescriptor(SubmitEvent.prototype, "respondWith")?.value,
+    HTMLFormElement.prototype.submit,
+    Reflect.get(window, "ModelContext"),
+    Reflect.get(window, "ToolActivatedEvent"),
+    Reflect.get(window, "ToolCancelEvent"),
+  ].map(String);
+
 test("loading the polyfill preserves the real native context and registered tools", async ({
   page,
   browser,
@@ -18,6 +29,7 @@ test("loading the polyfill preserves the real native context and registered tool
     });
     return { context, getter };
   });
+  const members = await page.evaluate(realmMembers);
 
   await page.addScriptTag({ url: "/auto.js" });
 
@@ -31,6 +43,7 @@ test("loading the polyfill preserves the real native context and registered tool
     };
   }, original);
   expect(outcome).toEqual({ sameContext: true, sameGetter: true, tools: ["native"] });
+  expect(await page.evaluate(realmMembers)).toEqual(members);
 
   await testInfo.attach("browser.json", {
     body: JSON.stringify({ version: browser.version() }),

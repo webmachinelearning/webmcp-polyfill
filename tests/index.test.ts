@@ -821,3 +821,16 @@ test("a detached frame rejects even when its exception constructor was never rea
   });
   expect(result).toEqual({ name: "InvalidStateError", type: "[object DOMException]" });
 });
+
+test("a prototype that refuses a member leaves nothing installed", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.evaluate(() => Object.freeze(SubmitEvent.prototype));
+  await page.addScriptTag({ url: "/auto.js" });
+  const installed = await page.evaluate(() => [
+    ...["ModelContext", "ToolActivatedEvent", "ToolCancelEvent"].filter((name) => name in window),
+    ...("modelContext" in document ? ["modelContext"] : []),
+  ]);
+  expect(installed).toEqual([]);
+  expect(errors).toEqual(["Cannot install WebMCP on this realm"]);
+});
