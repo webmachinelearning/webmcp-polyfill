@@ -2,7 +2,7 @@
 
 ## Results
 
-**223 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
+**238 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
 Playwright WebKit 26.6. Package checks also pass: imports, types, SSR, and tarball contents.
 CI runs these checks plus WPT in Chrome, Firefox, and actual Safari. Safari runs on
 `macos-26`; Playwright WebKit is a separate build.
@@ -12,19 +12,19 @@ in Chrome and Firefox:
 
 | Subtest result | Count |
 | --- | ---: |
-| PASS | 92 |
-| Expected FAIL | 52 |
-| Expected TIMEOUT | 26 |
-| Expected NOTRUN | 20 |
+| PASS | 116 |
+| Expected FAIL | 33 |
+| Expected TIMEOUT | 25 |
+| Expected NOTRUN | 16 |
 
 Tested with Chrome Canary 157.0.8080.0 and Firefox Nightly 159.0a1 (20260930214513).
 Safari has not yet run at this pin; none of the expectations are browser-specific.
-At the file level: 43 OK, 26 expected timeouts, one expected error.
+At the file level: 44 OK, 25 expected timeouts, one expected error.
 
 Expected failures are still failures. `NOTRUN` means an earlier timeout prevented
-the test from running, including three abort cases. Passing declarative checks only
-cover rejection or absence of tools. Of the 38 pinned IDL checks, the 16 for lifecycle
-event handlers and interfaces fail. This is not full conformance.
+the test from running, including one abort case. Passing declarative checks only
+cover rejection or absence of tools. All 38 pinned IDL checks pass. This is not
+full conformance.
 
 ## Run locally
 
@@ -66,13 +66,15 @@ other non-testharness files are outside this suite.
 ## Draft alignment and limitations
 
 Checked against [draft `d61d0e6`](https://github.com/webmachinelearning/webmcp/blob/d61d0e6d297ddb6bff3510b1330dbb215c6ef43c/index.bs)
-and `webmcp-types@0.1.9`.
+and `webmcp-types@0.1.10`.
 
-- **Missing APIs:** declarative forms, CSS states, and lifecycle events
-  (`toolactivated`/`toolcancel`, their handlers, and `ToolActivatedEvent`/`ToolCancelEvent`)
-  are not implemented.
+- **Missing APIs:** declarative forms and CSS states are not implemented.
 - **Draft differences:** results are JSON-serialized; some pinned tests expect raw
   strings. Omitted or `undefined` input becomes `{}`; `null` and primitives reject.
+- **Lifecycle events:** `toolactivated` fires before the callback is invoked, as the
+  draft specifies; the pinned `executeTool-abort` test and Chromium fire it after the
+  callback starts. Script-dispatched events cannot be
+  [trusted](https://dom.spec.whatwg.org/#dom-event-istrusted), so `isTrusted` is false.
 - **Timing:** MessagePorts approximate native task ordering. Aborting before
   dispatch skips the callback; the draft dispatches and then aborts its signal.
   Delegated permission checks are asynchronous, so argument errors can precede

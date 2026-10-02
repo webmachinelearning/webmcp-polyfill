@@ -42,6 +42,8 @@ try {
     "README.md",
     "dist/auto.d.ts",
     "dist/auto.js",
+    "dist/events.d.ts",
+    "dist/events.js",
     "dist/frames.d.ts",
     "dist/frames.js",
     "dist/index.d.ts",
@@ -100,6 +102,16 @@ try {
       // @ts-expect-error The current draft accepts objects, not serialized JSON.
       await context.executeTool(tool, '{}');
       return [result, omitted, explicitUndefined];
+    }
+
+    function observe(context: WebMCP.ModelContext): ToolCancelEvent {
+      context.addEventListener('toolactivated', (event) => {
+        const activated: string = event.toolName;
+      });
+      context.ontoolcancel = (event) => {
+        const cancelled: string = event.toolName;
+      };
+      return new ToolCancelEvent('toolcancel', { toolName: 'typed' });
     }
   `,
   );

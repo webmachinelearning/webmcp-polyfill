@@ -436,7 +436,14 @@ test("installs once, exposes only standard members, and keeps document identity"
   });
   expect(result).toEqual({
     same: true,
-    members: ["executeTool", "getTools", "ontoolchange", "registerTool"],
+    members: [
+      "executeTool",
+      "getTools",
+      "ontoolactivated",
+      "ontoolcancel",
+      "ontoolchange",
+      "registerTool",
+    ],
     own: [],
     brand: "[object ModelContext]",
     instance: true,

@@ -508,6 +508,53 @@ test("remote cancellation preserves the caller's reason and ignores late seriali
   expect(await owner.locator("body").getAttribute("data-serialized")).toBeNull();
 });
 
+test("lifecycle events fire at the context of the frame that owns the tool", async ({ page }) => {
+  const owner = await addFrame(page.mainFrame(), "owner", { origin: remoteOrigin });
+  await owner.evaluate(async (origin) => {
+    const context = document.modelContext!;
+    const events: string[] = [];
+    const record = (event: ToolActivatedEvent | ToolCancelEvent): void => {
+      events.push(`${event.type}:${event.toolName}`);
+      document.body.dataset.events = events.join(",");
+    };
+    context.addEventListener("toolactivated", record);
+    context.addEventListener("toolcancel", record);
+    await context.registerTool(
+      {
+        name: "pending",
+        description: "Pending",
+        execute() {
+          document.body.dataset.state = "started";
+          return new Promise(() => {});
+        },
+      },
+      { exposedTo: [origin] },
+    );
+  }, localOrigin);
+
+  const execution = await page.evaluateHandle(async (origin) => {
+    const context = document.modelContext!;
+    const events: string[] = [];
+    context.addEventListener("toolactivated", (event) => events.push(event.type));
+    context.addEventListener("toolcancel", (event) => events.push(event.type));
+    const tool = (await context.getTools({ fromOrigins: [origin] }))[0]!;
+    const controller = new AbortController();
+    const result = context.executeTool(tool, {}, { signal: controller.signal }).catch(() => null);
+    return { controller, events, result };
+  }, remoteOrigin);
+
+  await expect(owner.locator("body")).toHaveAttribute("data-state", "started");
+  await execution.evaluate(async ({ controller, result }) => {
+    controller.abort();
+    await result;
+  });
+  await expect(owner.locator("body")).toHaveAttribute(
+    "data-events",
+    "toolactivated:pending,toolcancel:pending",
+  );
+  expect(await execution.evaluate(({ events }) => events)).toEqual([]);
+});
+
 test("same-document navigation preserves a remote invocation and its callback signal", async ({
   page,
 }) => {
