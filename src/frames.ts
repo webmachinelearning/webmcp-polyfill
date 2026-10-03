@@ -1,12 +1,5 @@
 import type { WebMCP } from "webmcp-types";
-
-/** Tool metadata as its owner stores it and as frames exchange it. */
-export interface ToolMetadata
-  extends Pick<WebMCP.RegisteredTool, "name" | "title" | "description"> {
-  annotations: WebMCP.ToolAnnotations | undefined;
-  // Snapshot at registration; each discovery result parses a fresh copy.
-  serializedSchema: string | undefined;
-}
+import { NativeDOMException, executionError, type ToolMetadata } from "./tools.js";
 
 // Lexicographical, the order in which Web IDL reads dictionary members.
 export const annotationNames = [
@@ -23,7 +16,7 @@ interface Handlers {
     name: string,
     serializedInput: string,
     signal: AbortSignal,
-  ): Promise<string>;
+  ): Promise<string | null>;
   changed(): Promise<void>;
 }
 
@@ -33,7 +26,7 @@ type Request =
   | { kind: "execute"; name: string; input: string }
   | { kind: "changed" };
 
-type ReplyValue = boolean | ToolMetadata[] | string | undefined;
+type ReplyValue = boolean | ToolMetadata[] | string | null | undefined;
 
 interface Session {
   peer: Window;
@@ -43,7 +36,6 @@ interface Session {
 const protocol = "webmcp-polyfill";
 // Bounds handshakes, discovery, and permission replies; author code has no deadline.
 const deadline = 500;
-const NativeDOMException = globalThis.DOMException;
 
 export class FrameBridge {
   readonly #document: Document;
@@ -135,14 +127,15 @@ export class FrameBridge {
     name: string,
     serializedInput: string,
     signal?: AbortSignal,
-  ): Promise<string> {
+  ): Promise<string | null> {
     const reply = await this.#request(
       target,
       [expectedOrigin],
       { kind: "execute", name, input: serializedInput },
       signal,
     );
-    if (typeof reply.value !== "string") {
+    // A declarative tool whose form navigates has a null result.
+    if (typeof reply.value !== "string" && reply.value !== null) {
       throw executionError();
     }
     return reply.value;
@@ -766,8 +759,4 @@ function isWindow(value: MessageEventSource): value is Window {
   } catch {
     return false;
   }
-}
-
-export function executionError(): DOMException {
-  return new NativeDOMException("Tool execution failed", "UnknownError");
 }

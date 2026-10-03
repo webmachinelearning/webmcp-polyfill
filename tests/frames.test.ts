@@ -555,6 +555,116 @@ test("lifecycle events fire at the context of the frame that owns the tool", asy
   expect(await execution.evaluate(({ events }) => events)).toEqual([]);
 });
 
+test("a frame's declarative tool runs in its frame for same-origin callers only", async ({
+  page,
+}) => {
+  const sameOrigin = await addFrame(page.mainFrame(), "same");
+  const crossOrigin = await addFrame(page.mainFrame(), "cross", { origin: remoteOrigin });
+  for (const frame of [sameOrigin, crossOrigin]) {
+    await frame.evaluate(async () => {
+      const events: string[] = [];
+      document.modelContext!.addEventListener("toolactivated", (event) => {
+        events.push(event.toolName);
+        document.body.dataset.events = events.join(",");
+      });
+      const changed = new Promise((resolve) => {
+        document.modelContext!.addEventListener("toolchange", resolve, { once: true });
+      });
+      document.body.innerHTML = `
+        <form toolname="${window.name}_form" tooldescription="Form" toolautosubmit>
+          <input name="text">
+        </form>`;
+      document.forms[0]!.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const text = (document.forms[0]!.elements[0] as HTMLInputElement).value;
+        event.respondWith(Promise.resolve(`${window.name} got ${text}`));
+      });
+      await changed;
+    });
+  }
+
+  const outcome = await page.evaluate(async (origin) => {
+    const context = document.modelContext!;
+    const tools = await context.getTools({ fromOrigins: [origin] });
+    const result = await context.executeTool(tools[0]!, { text: "hi" });
+    return { names: tools.map((tool) => tool.name), result };
+  }, remoteOrigin);
+
+  expect(outcome).toEqual({ names: ["same_form"], result: "same got hi" });
+  await expect(sameOrigin.locator("body")).toHaveAttribute("data-events", "same_form");
+  await expect(crossOrigin.locator("body")).not.toHaveAttribute("data-events");
+});
+
+test("a frame's form that navigates resolves a caller in another frame with null", async ({
+  page,
+}) => {
+  const child = await addFrame(page.mainFrame(), "child");
+  await child.evaluate(async () => {
+    const changed = new Promise((resolve) => {
+      document.modelContext!.addEventListener("toolchange", resolve, { once: true });
+    });
+    document.body.innerHTML = `
+      <iframe name="results"></iframe>
+      <form toolname="navigate" tooldescription="Navigate" toolautosubmit
+        action="/" target="results"></form>`;
+    await changed;
+  });
+
+  const result = await page.evaluate(async () => {
+    const context = document.modelContext!;
+    const [tool] = await context.getTools();
+    return context.executeTool(tool!, {});
+  });
+
+  expect(result).toBeNull();
+});
+
+test("a fill that detaches the form's frame fails the call without toolactivated", async ({
+  page,
+}) => {
+  const child = await addFrame(page.mainFrame(), "child");
+  await child.evaluate(async () => {
+    const changed = new Promise((resolve) => {
+      document.modelContext!.addEventListener("toolchange", resolve, { once: true });
+    });
+    document.body.innerHTML = `
+      <form toolname="detaching" tooldescription="Detaches its frame">
+        <input name="text">
+        <button>Submit</button>
+      </form>`;
+    await changed;
+  });
+
+  const outcome = await page.evaluate(async () => {
+    const iframe = document.querySelector("iframe")!;
+    const frameDocument = iframe.contentDocument!;
+    const events: string[] = [];
+    frameDocument.modelContext!.addEventListener("toolactivated", (event) => {
+      events.push(event.toolName);
+    });
+    frameDocument.forms[0]!.addEventListener("input", () => iframe.remove(), { once: true });
+    const context = document.modelContext!;
+    const [tool] = await context.getTools();
+    const error = await context.executeTool(tool!, { text: "hi" }).catch((reason) => reason.name);
+    return { error, events };
+  });
+
+  expect(outcome).toEqual({ error: "UnknownError", events: [] });
+});
+
+test("a cross-origin frame registers its forms at its next call after its parent installs", async ({
+  page,
+}) => {
+  // Without the polyfill in its parent, the frame cannot confirm its tools policy yet.
+  await page.goto("/");
+  const child = await addFrame(page.mainFrame(), "child", { origin: remoteOrigin });
+  await child.evaluate(() => {
+    document.body.innerHTML = `<form toolname="late_form" tooldescription="Late"></form>`;
+  });
+  await page.addScriptTag({ url: "/auto.js" });
+  await expect.poll(() => discover(child).catch(() => [])).toEqual(["late_form"]);
+});
+
 test("same-document navigation preserves a remote invocation and its callback signal", async ({
   page,
 }) => {

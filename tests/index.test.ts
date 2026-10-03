@@ -385,6 +385,36 @@ test("operations on a real detached frame reject in the frame's realm", async ({
   expect(frame).toEqual(["InvalidStateError", "InvalidStateError", "InvalidStateError"]);
 });
 
+test("installation replaces page-defined interface globals with Web IDL descriptors", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    for (const name of ["ModelContext", "ToolActivatedEvent", "ToolCancelEvent"]) {
+      Reflect.set(window, name, "page value");
+    }
+  });
+  await page.addScriptTag({ url: "/auto.js" });
+  const descriptors = await page.evaluate(() =>
+    ["ModelContext", "ToolActivatedEvent", "ToolCancelEvent"].map((name) => {
+      const { value, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(
+        window,
+        name,
+      )!;
+      return { name, type: typeof value, writable, enumerable, configurable };
+    }),
+  );
+
+  expect(descriptors).toEqual(
+    ["ModelContext", "ToolActivatedEvent", "ToolCancelEvent"].map((name) => ({
+      name,
+      type: "function",
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    })),
+  );
+});
+
 test("installs once, exposes only standard members, and keeps document identity", async ({
   page,
 }) => {
@@ -820,4 +850,17 @@ test("a detached frame rejects even when its exception constructor was never rea
     }
   });
   expect(result).toEqual({ name: "InvalidStateError", type: "[object DOMException]" });
+});
+
+test("a prototype that refuses a member leaves nothing installed", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.evaluate(() => Object.freeze(SubmitEvent.prototype));
+  await page.addScriptTag({ url: "/auto.js" });
+  const installed = await page.evaluate(() => [
+    ...["ModelContext", "ToolActivatedEvent", "ToolCancelEvent"].filter((name) => name in window),
+    ...("modelContext" in document ? ["modelContext"] : []),
+  ]);
+  expect(installed).toEqual([]);
+  expect(errors).toEqual(["Cannot install WebMCP on this realm"]);
 });

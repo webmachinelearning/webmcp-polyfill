@@ -290,35 +290,51 @@ test("cancels the caller immediately and sends a default AbortError to the callb
   expect(outcome).toEqual(["caller reason", "AbortError"]);
 });
 
-test("unregistration leaves an already-running invocation alive", async ({ page }) => {
+test("unregistration inside or outside a running callback leaves its invocation alive", async ({
+  page,
+}) => {
   const outcome = await page.evaluate(async () => {
     const context = document.modelContext!;
-    const registration = new AbortController();
-    const { promise: started, resolve: entered } = Promise.withResolvers<AbortSignal>();
-    const { promise: completion, resolve: complete } = Promise.withResolvers<string>();
+    const cancelled: string[] = [];
+    context.addEventListener("toolcancel", (event) => cancelled.push(event.toolName));
+    const results = [];
+    for (const unregisterInsideCallback of [false, true]) {
+      const registration = new AbortController();
+      const { promise: started, resolve: entered } = Promise.withResolvers<AbortSignal>();
+      const { promise: completion, resolve: complete } = Promise.withResolvers<string>();
 
-    await context.registerTool(
-      {
-        name: "pending",
-        description: "Pending",
-        execute(_input, { signal }) {
-          entered(signal);
-          return completion;
+      await context.registerTool(
+        {
+          name: "pending",
+          description: "Pending",
+          execute(_input, { signal }) {
+            if (unregisterInsideCallback) {
+              registration.abort();
+            }
+            entered(signal);
+            return completion;
+          },
         },
-      },
-      { signal: registration.signal },
-    );
+        { signal: registration.signal },
+      );
 
-    const tool = (await context.getTools())[0]!;
-    const pending = context.executeTool(tool, {});
-    const callbackSignal = await started;
-    registration.abort();
-    const count = (await context.getTools()).length;
-    complete("finished");
-    return { count, aborted: callbackSignal.aborted, result: await pending };
+      const tool = (await context.getTools())[0]!;
+      const pending = context.executeTool(tool, {});
+      const callbackSignal = await started;
+      if (!unregisterInsideCallback) {
+        registration.abort();
+      }
+      const count = (await context.getTools()).length;
+      complete("finished");
+      results.push({ count, aborted: callbackSignal.aborted, result: await pending });
+    }
+    return { results, cancelled };
   });
 
-  expect(outcome).toEqual({ count: 0, aborted: false, result: '"finished"' });
+  expect(outcome).toEqual({
+    results: Array(2).fill({ count: 0, aborted: false, result: '"finished"' }),
+    cancelled: [],
+  });
 });
 
 // Native task ordering can differ (see TESTING.md).
