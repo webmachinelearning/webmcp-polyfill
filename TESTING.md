@@ -2,13 +2,13 @@
 
 ## Results
 
-**223 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
+**226 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
 Playwright WebKit 26.6. Package checks also pass: imports, types, SSR, and tarball contents.
 CI runs these checks plus WPT in Chrome, Firefox, and actual Safari. Safari runs on
 `macos-26`; Playwright WebKit is a separate build.
 
 WPT covers **all 70 WebMCP testharness files, 190 subtests**, with zero unexpected results
-in Chrome and Firefox:
+in Chrome, Firefox, and Safari:
 
 | Subtest result | Count |
 | --- | ---: |
@@ -17,9 +17,10 @@ in Chrome and Firefox:
 | Expected TIMEOUT | 26 |
 | Expected NOTRUN | 20 |
 
-Tested with Chrome Canary 157.0.8080.0 and Firefox Nightly 159.0a1 (20260930214513).
-Safari has not yet run at this pin; none of the expectations are browser-specific.
-At the file level: 43 OK, 26 expected timeouts, one expected error.
+The [CI run for PR #8](https://github.com/webmachinelearning/webmcp-polyfill/actions/runs/36969192728)
+used Chrome Canary 157.0.8081.0, Firefox Nightly 159.0a1, and Safari 26.6.2
+(21624.5.1.11.3). All three have the counts above; none of the expectations are
+browser-specific. At the file level: 43 OK, 26 expected timeouts, one expected error.
 
 Expected failures are still failures. `NOTRUN` means an earlier timeout prevented
 the test from running, including three abort cases. Passing declarative checks only
@@ -71,8 +72,8 @@ and `webmcp-types@0.1.9`.
 - **Missing APIs:** declarative forms, CSS states, and lifecycle events
   (`toolactivated`/`toolcancel`, their handlers, and `ToolActivatedEvent`/`ToolCancelEvent`)
   are not implemented.
-- **Draft differences:** results are JSON-serialized; some pinned tests expect raw
-  strings.
+- **Pinned WPT differences:** results are JSON-serialized as the draft requires;
+  some pinned tests expect raw strings.
 - **Timing:** MessagePorts approximate native task ordering. Aborting before
   dispatch skips the callback; the draft dispatches and then aborts its signal.
   Delegated permission checks are asynchronous, so argument errors can precede
