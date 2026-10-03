@@ -66,8 +66,14 @@ export function installWebMCP(): void {
 
   // Declarative tools patch other prototypes, so they go first: a refusal leaves nothing installed.
   installDeclarative();
+  // Redefining a page's own global retains unspecified attributes.
   for (const [name, value] of Object.entries(interfaceObjects)) {
-    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
+    Object.defineProperty(globalThis, name, {
+      value,
+      configurable: true,
+      writable: true,
+      enumerable: false,
+    });
   }
 
   // A method is non-constructible; defaultView supplies the native Document brand check.

@@ -2,7 +2,7 @@
 
 ## Results
 
-**349 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
+**352 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
 Playwright WebKit 26.6. Package checks also pass: imports, types, SSR, and tarball contents.
 CI runs these checks plus WPT in Chrome, Firefox, and actual Safari. Safari runs on
 `macos-26`; Playwright WebKit is a separate build.

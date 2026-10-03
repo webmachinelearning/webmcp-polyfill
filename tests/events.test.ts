@@ -13,11 +13,15 @@ test("event interfaces convert their arguments like Web IDL constructors", async
     return [ToolActivatedEvent, ToolCancelEvent].map((EventInterface) => {
       const global = Object.getOwnPropertyDescriptor(window, EventInterface.name)!;
       const toolName = Object.getOwnPropertyDescriptor(EventInterface.prototype, "toolName")!;
+      const OtherInterface =
+        EventInterface === ToolActivatedEvent ? ToolCancelEvent : ToolActivatedEvent;
       const errors = [
         () => Reflect.construct(EventInterface, []),
         () => Reflect.apply(EventInterface, undefined, ["x"]),
         () => toolName.get!.call(new Event("x")),
+        () => toolName.get!.call(new OtherInterface("x")),
         () => Reflect.construct(EventInterface, ["x", { toolName: Symbol("name") }]),
+        () => Reflect.construct(EventInterface, ["x", 1]),
       ].map((operation) => {
         try {
           operation();
@@ -48,6 +52,8 @@ test("event interfaces convert their arguments like Web IDL constructors", async
         length: EventInterface.length,
         global: [global.writable, global.enumerable, global.configurable],
         parent: Object.getPrototypeOf(EventInterface) === Event,
+        prototypeParent: Object.getPrototypeOf(EventInterface.prototype) === Event.prototype,
+        members: Object.keys(EventInterface.prototype),
         getter: [typeof toolName.get, toolName.set, toolName.enumerable, toolName.configurable],
         brand: Object.prototype.toString.call(plain),
         errors,
@@ -60,6 +66,9 @@ test("event interfaces convert their arguments like Web IDL constructors", async
           plain.isTrusted,
         ],
         converted: [converted.type, converted.toolName, converted.bubbles],
+        defaults: [null, undefined].map((eventInit) =>
+          Reflect.get(Reflect.construct(EventInterface, ["plain", eventInit]), "toolName"),
+        ),
         reads,
       };
     });
@@ -71,11 +80,14 @@ test("event interfaces convert their arguments like Web IDL constructors", async
       length: 1,
       global: [true, false, true],
       parent: true,
+      prototypeParent: true,
+      members: ["toolName"],
       getter: ["function", undefined, true, true],
       brand: `[object ${name}]`,
-      errors: ["TypeError", "TypeError", "TypeError", "TypeError"],
+      errors: ["TypeError", "TypeError", "TypeError", "TypeError", "TypeError", "TypeError"],
       plain: ["plain", "", false, false, false, false],
       converted: ["undefined", "1", true],
+      defaults: ["", ""],
       reads: ["bubbles", "cancelable", "composed", "toolName"],
     })),
   );
@@ -198,6 +210,14 @@ test("no lifecycle event fires for a call that never starts or has already settl
     early.abort();
     await skipped;
 
+    // Aborted by another call's activation, after both dispatch tasks were queued.
+    const queued = new AbortController();
+    context.addEventListener("toolactivated", () => queued.abort(), { once: true });
+    await Promise.all([
+      context.executeTool(done, {}),
+      context.executeTool(done, {}, { signal: queued.signal }).catch(() => null),
+    ]);
+
     // Rejected before invocation.
     await context.executeTool(missing, {}).catch(() => null);
 
@@ -211,5 +231,5 @@ test("no lifecycle event fires for a call that never starts or has already settl
     return events;
   });
 
-  expect(outcome).toEqual(["toolactivated:done"]);
+  expect(outcome).toEqual(["toolactivated:done", "toolactivated:done"]);
 });

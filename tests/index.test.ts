@@ -385,6 +385,36 @@ test("operations on a real detached frame reject in the frame's realm", async ({
   expect(frame).toEqual(["InvalidStateError", "InvalidStateError", "InvalidStateError"]);
 });
 
+test("installation replaces page-defined interface globals with Web IDL descriptors", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    for (const name of ["ModelContext", "ToolActivatedEvent", "ToolCancelEvent"]) {
+      Reflect.set(window, name, "page value");
+    }
+  });
+  await page.addScriptTag({ url: "/auto.js" });
+  const descriptors = await page.evaluate(() =>
+    ["ModelContext", "ToolActivatedEvent", "ToolCancelEvent"].map((name) => {
+      const { value, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(
+        window,
+        name,
+      )!;
+      return { name, type: typeof value, writable, enumerable, configurable };
+    }),
+  );
+
+  expect(descriptors).toEqual(
+    ["ModelContext", "ToolActivatedEvent", "ToolCancelEvent"].map((name) => ({
+      name,
+      type: "function",
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    })),
+  );
+});
+
 test("installs once, exposes only standard members, and keeps document identity", async ({
   page,
 }) => {
