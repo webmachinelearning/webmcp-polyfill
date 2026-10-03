@@ -19,12 +19,8 @@ in Chrome and Firefox:
 
 Tested locally with Chrome Canary 157.0.8084.0 and Firefox Nightly 158.0a1.
 At the file level: 63 OK, five expected timeouts, two expected errors.
-None of the expectations are browser-specific.
-
-The [Safari CI run for PR #9](https://github.com/webmachinelearning/webmcp-polyfill/actions/runs/36969302314/job/110719843222)
-used Safari 26.6.2 and failed: WebDriver could not close test windows, so only
-185 of 190 subtests ran. The recorded subtests had no unexpected results, but
-the incomplete run does not pass the suite.
+Safari may report the detached-frame test before its unhandled rejection reaches
+the harness, so that file allows either OK or ERROR; its subtest must still FAIL.
 
 Expected failures are still failures. `NOTRUN` means an earlier timeout prevented
 the test from running, including one abort case. All 38 pinned IDL checks pass;
@@ -64,6 +60,11 @@ WPT_ROOT=../wpt WPT_BROWSER=safari pnpm test:wpt
 
 Firefox downloads Nightly unless `FIREFOX_BIN` is set.
 Safari requires macOS, [Remote Automation, and WPT hosts-file setup](https://web-platform-tests.org/running-tests/safari.html).
+The disposable Safari CI runner also disables `AskBeforeSubmittingInsecureForms`:
+the HTTPS tests submit to `about:blank`, which opens a native confirmation sheet in
+Safari 26.6.2 and prevents WebDriver from closing the test tab. WPT then discards
+the subtest results, failing the completeness check. Local runs leave Safari's
+preferences unchanged.
 
 Set `WPT_PYTHON` or `WPT_VENV` to use an existing Python environment. Extra arguments
 go to WPT. On macOS, Firefox may need `--certutil-binary` pointing to a wrapper that
