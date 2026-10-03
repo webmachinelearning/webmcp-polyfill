@@ -243,6 +243,9 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
   ): Promise<string> {
     const ownerDocument = this.#document;
     const target = readExecutionTarget(tool);
+    if (!isObject(inputObject)) {
+      throw new TypeError("inputObject must be an object");
+    }
     const settings = readDictionary(options);
     const callerSignal = readAbortSignal(settings.signal);
 
@@ -250,9 +253,6 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
     const expectedOrigin = URL.parse(target.origin)?.origin;
     if (!expectedOrigin || expectedOrigin === "null") {
       throw new NativeDOMException("Invalid or opaque origin", "NotSupportedError");
-    }
-    if (!isObject(inputObject)) {
-      throw new TypeError("inputObject must be an object");
     }
 
     const serializedInput = serializeJSON(inputObject);
