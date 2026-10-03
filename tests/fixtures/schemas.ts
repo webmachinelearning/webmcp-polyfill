@@ -1,5 +1,5 @@
-// Chromium's html_form_mcp_tool_test.cc schema cases at dbdbb13fd74c, checked in Chrome Canary
-// 156.0.8069.0, leaving out the flagged file input and form-associated custom element cases.
+// Schema cases beyond WPT from Chromium's html_form_mcp_tool_test.cc at dbdbb13fd74c,
+// checked in Chrome Canary 156.0.8069.0. Flagged file/custom-element cases are excluded.
 export const chromiumSchemas: { name: string; html: string; schema: object }[] = [
   {
     name: "ParameterSchema_Disabled",
@@ -9,11 +9,6 @@ export const chromiumSchemas: { name: string; html: string; schema: object }[] =
   {
     name: "ParameterSchema_Readonly",
     html: `<form id="form" toolname="mytool" tooldescription="perform task"> <input name="text1" type="text"> <input name="text2" type="text" readonly> <textarea name="area1" readonly> </form>`,
-    schema: {"type": "object", "properties": {"text1": {"type": "string"}}, "required": []},
-  },
-  {
-    name: "ParameterSchema_TextInput",
-    html: `<form id="form" toolname="mytool" tooldescription="perform task"> <input name="text1" type="text"> </form>`,
     schema: {"type": "object", "properties": {"text1": {"type": "string"}}, "required": []},
   },
   {

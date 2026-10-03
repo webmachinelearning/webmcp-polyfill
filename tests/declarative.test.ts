@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   await page.addScriptTag({ url: "/auto.js" });
 });
 
-test("a form with a tool name and description becomes a discoverable tool", async ({ page }) => {
+test("form tools expose their document and default metadata", async ({ page }) => {
   const outcome = await page.evaluate(async () => {
     const context = document.modelContext!;
     const changed = new Promise((resolve) => {
@@ -15,16 +15,17 @@ test("a form with a tool name and description becomes a discoverable tool", asyn
     });
     document.body.insertAdjacentHTML(
       "beforeend",
-      `<form toolname="search_tool" tooldescription="Search the web">
-        <input type="text" name="query" required toolparamdescription="The search query">
-        <input type="number" name="limit" toolparamdescription="Max results count">
-        <input type="checkbox" name="safe_search"
-          toolparamdescription="Enable safe search filtering">
-      </form>`,
+      `<form toolname="search_tool" tooldescription="Search the web"></form>`,
     );
     await changed;
     const tools = await context.getTools();
-    return tools.map(({ window: owner, ...tool }) => ({ ...tool, ownWindow: owner === window }));
+    return tools.map(({ name, title, description, origin, window: owner }) => ({
+      name,
+      title,
+      description,
+      origin,
+      ownWindow: owner === window,
+    }));
   });
 
   expect(outcome).toEqual([
@@ -32,15 +33,6 @@ test("a form with a tool name and description becomes a discoverable tool", asyn
       name: "search_tool",
       title: "",
       description: "Search the web",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "The search query" },
-          limit: { type: "number", multipleOf: 1, description: "Max results count" },
-          safe_search: { type: "boolean", description: "Enable safe search filtering" },
-        },
-        required: ["query"],
-      },
       origin: "http://localhost:8793",
       ownWindow: true,
     },
@@ -304,8 +296,6 @@ test("the first form or script tool to claim a name holds it until it is removed
 }) => {
   const outcome = await page.evaluate(async () => {
     const context = document.modelContext!;
-    let changes = 0;
-    context.addEventListener("toolchange", () => changes++);
     const describe = async () =>
       (await context.getTools()).map((tool) => `${tool.name}: ${tool.description}`);
     const script = { name: "shared", description: "script", execute() {} };
@@ -313,7 +303,7 @@ test("the first form or script tool to claim a name holds it until it is removed
     document.body.innerHTML = `
       <form toolname="shared" tooldescription="first"></form>
       <form toolname="shared" tooldescription="second"></form>`;
-    const claimed = { tools: await describe(), changes };
+    await describe();
     const held = await context.registerTool(script).catch((error) => error.name);
 
     // Chromium would register this form only once it changes.
@@ -346,11 +336,10 @@ test("the first form or script tool to claim a name holds it until it is removed
     await describe();
     document.forms[1]!.insertAdjacentHTML("beforeend", `<input name="added">`);
     const kept = await describe();
-    return { claimed, held, promoted, reused, blocked, released, renamed, kept };
+    return { held, promoted, reused, blocked, released, renamed, kept };
   });
 
   expect(outcome).toEqual({
-    claimed: { tools: ["shared: first"], changes: 1 },
     held: "InvalidStateError",
     promoted: ["shared: second"],
     reused: "registered",
@@ -361,7 +350,7 @@ test("the first form or script tool to claim a name holds it until it is removed
   });
 });
 
-test("forms in the page register at installation, but not forms of other documents", async ({
+test("installation discovers existing forms but ignores template contents", async ({
   page,
 }) => {
   await page.goto("/");
@@ -373,16 +362,14 @@ test("forms in the page register at installation, but not forms of other documen
     const context = document.modelContext!;
     const installed = (await context.getTools()).map((tool) => tool.name);
     const markup = `<form toolname="detached" tooldescription="Elsewhere"></form>`;
-    document.implementation.createHTMLDocument().body.innerHTML = markup;
-    new DOMParser().parseFromString(markup, "text/html");
     const template = document.createElement("template");
     template.innerHTML = markup;
     document.body.append(template);
-    const afterOtherDocuments = (await context.getTools()).map((tool) => tool.name);
-    return { installed, afterOtherDocuments };
+    const afterTemplate = (await context.getTools()).map((tool) => tool.name);
+    return { installed, afterTemplate };
   });
 
-  expect(outcome).toEqual({ installed: ["early"], afterOtherDocuments: ["early"] });
+  expect(outcome).toEqual({ installed: ["early"], afterTemplate: ["early"] });
 });
 
 test("a form adopted by another document unregisters", async ({ page }) => {
@@ -454,14 +441,11 @@ test("executing an autosubmit form fills it, then submits for the page's respons
     });
 
     const [tool] = await context.getTools();
-    const result = await context.executeTool(tool!, { query: "testing" });
-    return { result, order };
+    await context.executeTool(tool!, { query: "testing" });
+    return order;
   });
 
-  expect(outcome).toEqual({
-    result: "found it",
-    order: ["input testing", "change testing", "toolactivated testing", "submit true"],
-  });
+  expect(outcome).toEqual(["input testing", "change testing", "toolactivated testing", "submit true"]);
 });
 
 test("filling converts values and fires input and change events", async ({ page }) => {
@@ -676,7 +660,7 @@ test("month and week inputs accept only their formats in every browser", async (
   });
 });
 
-test("the call settles with the page's response, null for a navigation, or an error", async ({
+test("response conversion and scripted submission settle without unhandled rejections", async ({
   page,
 }) => {
   const outcome = await page.evaluate(async () => {
@@ -697,11 +681,7 @@ test("the call settles with the page's response, null for a navigation, or an er
       event.preventDefault();
       event.respondWith(response);
     };
-    const circular: Record<string, unknown> = {};
-    circular.self = circular;
     const handlers: [string, (event: SubmitEvent) => void][] = [
-      ["navigation", () => {}],
-      ["string", (event) => respond(event, Promise.resolve("plain"))],
       ["object", (event) => respond(event, Promise.resolve({ ok: true }))],
       ["number", (event) => respond(event, Promise.resolve(5))],
       ["undefined", (event) => respond(event, Promise.resolve(undefined))],
@@ -713,9 +693,7 @@ test("the call settles with the page's response, null for a navigation, or an er
           event.respondWith(Promise.resolve("responded late"));
         },
       ],
-      ["circular", (event) => respond(event, Promise.resolve(circular))],
       ["rejected", (event) => respond(event, Promise.reject(new Error("failed")))],
-      ["prevented", (event) => event.preventDefault()],
       [
         "form.submit()",
         (event) => {
@@ -741,15 +719,11 @@ test("the call settles with the page's response, null for a navigation, or an er
 
   expect(outcome).toEqual({
     results: {
-      navigation: null,
-      string: "plain",
       object: '{"ok":true}',
       number: "5",
       undefined: "undefined",
       "after awaiting": "responded late",
-      circular: "UnknownError",
       rejected: "UnknownError",
-      prevented: "UnknownError",
       "form.submit()": null,
       invalid: "UnknownError",
     },
@@ -788,7 +762,7 @@ test("respondWith() adopts the response before page code can change its promise 
   expect(result).toBe("ok");
 });
 
-test("SubmitEvent gains agentInvoked and respondWith() with Chromium's checks", async ({
+test("SubmitEvent members enforce receiver checks and convert response arguments", async ({
   page,
 }) => {
   const outcome = await page.evaluate(async () => {
@@ -821,27 +795,11 @@ test("SubmitEvent gains agentInvoked and respondWith() with Chromium's checks", 
     };
 
     document.body.innerHTML = `
-      <form toolname="agent" tooldescription="Agent" toolautosubmit><button>Go</button></form>
-      <form id="page"><button>Go</button></form>`;
-    const [agentForm, pageForm] = document.forms;
-    const pageSubmission: Record<string, unknown> = {};
-    pageForm!.addEventListener("submit", (event) => {
-      pageSubmission.agentInvoked = event.agentInvoked;
-      pageSubmission.respondWith = errorName(() => event.respondWith(Promise.resolve()));
+      <form toolname="agent" tooldescription="Agent" toolautosubmit><button>Go</button></form>`;
+    let withoutArguments = "";
+    document.forms[0]!.addEventListener("submit", (event) => {
       event.preventDefault();
-    });
-    pageForm!.requestSubmit();
-
-    let saved: SubmitEvent | undefined;
-    const agentSubmission: Record<string, unknown> = {};
-    agentForm!.addEventListener("submit", (event) => {
-      saved = event;
-      agentSubmission.agentInvoked = event.agentInvoked;
-      agentSubmission.beforePreventDefault = errorName(() => event.respondWith(Promise.resolve()));
-      event.preventDefault();
-      agentSubmission.withoutArguments = errorName(() =>
-        Reflect.apply(respondWith.value, event, []),
-      );
+      withoutArguments = errorName(() => Reflect.apply(respondWith.value, event, []));
       // Web IDL converts any value to a promise; the last response wins.
       respondWith.value.call(event, "first");
       respondWith.value.call(event, "last");
@@ -849,8 +807,7 @@ test("SubmitEvent gains agentInvoked and respondWith() with Chromium's checks", 
     const context = document.modelContext!;
     const [tool] = await context.getTools();
     const result = await context.executeTool(tool!, {});
-    const late = errorName(() => saved!.respondWith(Promise.resolve("late")));
-    return { shape, pageSubmission, agentSubmission, result, late };
+    return { shape, withoutArguments, result };
   });
 
   expect(outcome).toEqual({
@@ -859,14 +816,8 @@ test("SubmitEvent gains agentInvoked and respondWith() with Chromium's checks", 
       method: { enumerable: true, writable: true, length: 1 },
       wrongBrand: { getter: "TypeError", method: "TypeError" },
     },
-    pageSubmission: { agentInvoked: false, respondWith: "InvalidStateError" },
-    agentSubmission: {
-      agentInvoked: true,
-      beforePreventDefault: "InvalidStateError",
-      withoutArguments: "TypeError",
-    },
+    withoutArguments: "TypeError",
     result: "last",
-    late: "InvalidStateError",
   });
 });
 
@@ -1282,13 +1233,12 @@ test("a newer call rejects one that waits for the user, but not one the page is 
   expect(outcome).toEqual({ first: "UnknownError", second: "resolved 2", echoes: ["1", "2"] });
 });
 
-test("a change during the agent's submit event keeps the call, a later one cancels it", async ({
+test("a reset or removal cancels every call waiting for a response", async ({
   page,
 }) => {
   const outcome = await page.evaluate(async () => {
     const context = document.modelContext!;
     document.body.innerHTML = `
-      <form toolname="inline" tooldescription="Removed during submit" toolautosubmit></form>
       <form toolname="reset" tooldescription="Reset while responding" toolautosubmit></form>
       <form toolname="remove" tooldescription="Removed while responding" toolautosubmit></form>`;
     const tools = new Map((await context.getTools()).map((tool) => [tool.name, tool]));
@@ -1319,13 +1269,6 @@ test("a change during the agent's submit event keeps the call, a later one cance
       return { call, respond: () => respond("late") };
     };
 
-    form("inline").addEventListener("submit", (event) => {
-      event.preventDefault();
-      event.respondWith(Promise.resolve("kept"));
-      form("inline").remove();
-    });
-    const inline = settle(context.executeTool(tools.get("inline")!));
-
     // A reset or removal cancels every call that waits for a response, not only the latest.
     const older = await respondLater("reset");
     const newer = await respondLater("reset");
@@ -1342,7 +1285,6 @@ test("a change during the agent's submit event keeps the call, a later one cance
     removed.forEach((call) => call.respond());
 
     return {
-      inline: await inline,
       reset: [await older.call, await newer.call],
       removed: [await removed[0]!.call, await removed[1]!.call],
       cancels,
@@ -1351,7 +1293,6 @@ test("a change during the agent's submit event keeps the call, a later one cance
   });
 
   expect(outcome).toEqual({
-    inline: "resolved kept",
     reset: ["UnknownError", "UnknownError"],
     removed: ["UnknownError", "UnknownError"],
     cancels: [],

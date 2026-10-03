@@ -46,6 +46,12 @@ pnpm test:package
 native WebMCP. A separate Chromium test uses `--enable-features=WebMCP` to check
 that loading the polyfill preserves the native context and its tools.
 
+Use WPT for shared conformance cases. Local tests cover installation, documented
+polyfill differences, and assertions that WPT does not make or reach. Compare
+individual assertions and recorded results before adding coverage: the pinned
+manual-submit, reset, and abort tests stop at unsupported pseudo-class checks,
+so local tests still exercise the behavior beyond those failures.
+
 WPT needs Python 3.11+ and a clean checkout at
 [`fe52996`](https://github.com/web-platform-tests/wpt/commit/fe52996d4465f23617bce91927bdd58e6ce8f541).
 The [CI workflow](.github/workflows/test.yml) has the sparse-checkout and dependency setup.
