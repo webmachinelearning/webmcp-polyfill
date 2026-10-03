@@ -60,11 +60,11 @@ WPT_ROOT=../wpt WPT_BROWSER=safari pnpm test:wpt
 
 Firefox downloads Nightly unless `FIREFOX_BIN` is set.
 Safari requires macOS, [Remote Automation, and WPT hosts-file setup](https://web-platform-tests.org/running-tests/safari.html).
-The disposable Safari CI runner also disables `AskBeforeSubmittingInsecureForms`:
-the HTTPS tests submit to `about:blank`, which opens a native confirmation sheet in
-Safari 26.6.2 and prevents WebDriver from closing the test tab. WPT then discards
-the subtest results, failing the completeness check. Local runs leave Safari's
-preferences unchanged.
+Safari 26.6.2 opens a native confirmation sheet when the HTTPS tests submit to
+`about:blank`. It prevents WebDriver from closing four test tabs, so WPT discards
+five subtest results and fails the completeness check at 185/190. The current
+warning does not honor `AskBeforeSubmittingInsecureForms`. Using an HTTPS form
+destination avoids the warning; that fixture repair needs to land in WPT.
 
 Set `WPT_PYTHON` or `WPT_VENV` to use an existing Python environment. Extra arguments
 go to WPT. On macOS, Firefox may need `--certutil-binary` pointing to a wrapper that

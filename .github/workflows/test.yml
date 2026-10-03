@@ -104,10 +104,6 @@ jobs:
         if: matrix.browser == 'safari'
         run: |
           sudo safaridriver --enable
-          # Set sandbox preferences before first launch; insecure-form sheets block WPT tab cleanup.
-          safari_preferences="$HOME/Library/Containers/com.apple.Safari/Data/Library/Preferences"
-          mkdir -p "$safari_preferences"
-          defaults write "$safari_preferences/com.apple.Safari.plist" AskBeforeSubmittingInsecureForms -bool false
           python .reference/wpt/wpt make-hosts-file | sudo tee -a /etc/hosts
       - run: pnpm test:wpt
         env:
