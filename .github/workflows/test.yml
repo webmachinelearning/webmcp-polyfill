@@ -104,8 +104,10 @@ jobs:
         if: matrix.browser == 'safari'
         run: |
           sudo safaridriver --enable
-          # HTTPS tests submit to about:blank; Safari's confirmation sheet blocks WebDriver cleanup.
-          defaults write com.apple.Safari AskBeforeSubmittingInsecureForms -bool false
+          # Set sandbox preferences before first launch; insecure-form sheets block WPT tab cleanup.
+          safari_preferences="$HOME/Library/Containers/com.apple.Safari/Data/Library/Preferences"
+          mkdir -p "$safari_preferences"
+          defaults write "$safari_preferences/com.apple.Safari.plist" AskBeforeSubmittingInsecureForms -bool false
           python .reference/wpt/wpt make-hosts-file | sudo tee -a /etc/hosts
       - run: pnpm test:wpt
         env:
