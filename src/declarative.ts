@@ -6,6 +6,7 @@ import {
   queueTask,
   toolNamePattern,
   type StoredTool,
+  type ToolMetadata,
 } from "./tools.js";
 
 /** The tool map that declarative tools share with registerTool(), and its change notification. */
@@ -14,10 +15,7 @@ interface ToolHost {
   changed(): void;
 }
 
-interface FormDefinition {
-  name: string;
-  title: string;
-  description: string;
+interface FormDefinition extends Pick<ToolMetadata, "name" | "title" | "description"> {
   autosubmit: boolean;
   serializedSchema: string;
   declaration: string;
@@ -25,15 +23,14 @@ interface FormDefinition {
 
 interface PendingSubmission {
   form: HTMLFormElement;
-  // Waiting for the form's submission, then submitting from the agent's submit event until the
-  // polyfill settles it in a later task. The call may then still wait for the page's response.
+  /** "submitting" lasts until the settlement task; the page's response may remain pending. */
   phase: "waiting" | "submitting" | "handled";
   response?: Promise<unknown>;
   resolve(result: unknown): void;
   reject(): void;
 }
 
-// A submitted form navigates instead of responding; executeTool() then resolves null.
+// Navigation resolves null; a null response serializes as "null".
 const navigated = Symbol("navigated");
 const submissions = new WeakMap<Event, PendingSubmission>();
 const documentTools = new WeakMap<Document, DeclarativeTools>();
@@ -42,7 +39,8 @@ const documentTools = new WeakMap<Document, DeclarativeTools>();
  * Adds the explainer's SubmitEvent members, and lets form.submit() complete the form's tool calls.
  *
  * @throws {TypeError} If a prototype prevents installation; nothing is defined then.
- * @see https://github.com/webmachinelearning/webmcp/blob/main/declarative-api-explainer.md
+ * @see https://github.com/webmachinelearning/webmcp/blob/main/declarative-api-explainer.md#events
+ * @see https://webidl.spec.whatwg.org/#es-promise
  */
 export function installDeclarative(): void {
   const patches: [object, string][] = [
@@ -66,8 +64,8 @@ export function installDeclarative(): void {
       if (arguments.length < 1) {
         throw new TypeError("respondWith() requires a response");
       }
-      // Web IDL converts the argument to a promise before the method's steps.
-      const response = Promise.resolve(agentResponse);
+      // Web IDL adopts the response into a fresh promise before the method's steps.
+      const response = new Promise<unknown>((resolve) => resolve(agentResponse));
       const submission = submissionOf(this);
       // Chromium's checks, in its order: agent-invoked, canceled, still dispatching. The polyfill
       // settles a submission in a later task, so a listener may respond after awaiting.
@@ -89,6 +87,8 @@ export function installDeclarative(): void {
           "InvalidStateError",
         );
       }
+      // Prevent unhandledrejection before the settlement task observes the response.
+      void response.catch(() => {});
       submission.response = response;
     },
   };
@@ -102,7 +102,7 @@ export function installDeclarative(): void {
   const { submit } = {
     submit(this: HTMLFormElement): void {
       nativeSubmit.call(this);
-      // As in Chromium, submitting a form from script completes its running tool calls.
+      // submit() skips the submit event, so complete the form's running calls here.
       documentTools.get(formMember(this, "ownerDocument"))?.submitted(this);
     },
   };
@@ -116,25 +116,23 @@ export function installDeclarative(): void {
   addEventListener("submit", (event) => documentTools.get(document)?.submitting(event), true);
 }
 
-// A capture listener that the page added before installation runs before the polyfill's own,
-// so the event's members also recognize an agent's submission.
+/** Recognizes submissions even in capture listeners registered before the polyfill. */
 function submissionOf(event: SubmitEvent): PendingSubmission | undefined {
   documentTools.get(document)?.submitting(event);
   return submissions.get(event);
 }
 
 /**
- * Declarative tools: forms with `toolname` and `tooldescription` attributes.
+ * Maintains tool registrations and pending calls for forms that declare tools.
  *
- * The draft's declarative section is a TODO, so this follows the declarative API explainer
- * and Chromium's form_mcp_schema.cc and html_form_element.cc at dbdbb13fd74c.
+ * @see https://github.com/webmachinelearning/webmcp/blob/main/declarative-api-explainer.md#processing-model
+ * @see [Tracked sources and limitations](../TESTING.md#draft-alignment-and-limitations)
  */
 export class DeclarativeTools {
   readonly #document: Document;
   readonly #host: ToolHost;
-  // The definition each form registered, while it holds that name in the host's map.
   readonly #registrations = new Map<HTMLFormElement, FormDefinition>();
-  // Unfinished calls. A form has at most one call that waits for its submission.
+  /** Responses may overlap, but only one call per form waits for submission. */
   readonly #pending = new Set<PendingSubmission>();
 
   constructor(view: Window, host: ToolHost) {
@@ -143,7 +141,7 @@ export class DeclarativeTools {
     documentTools.set(this.#document, this);
     // A reset counts only once the form's listeners could prevent it, so it is heard as it bubbles.
     view.addEventListener("reset", (event) => this.#resetting(event));
-    // Each mutation batch rereads every form, not only those the records touched.
+    // Labels and associated controls outside a form can change its schema.
     new MutationObserver(() => this.update()).observe(this.#document, {
       subtree: true,
       childList: true,
@@ -153,18 +151,18 @@ export class DeclarativeTools {
     this.update();
   }
 
-  // Unregisters forms that left the document or lost a tool attribute. Chromium does this
-  // synchronously, so script can reuse their names before mutation observers run; it replaces
-  // other changed forms in a later task.
+  /**
+   * Frees names of removed or incomplete declarations before imperative registration.
+   * Leaves other changes for update(), matching Chromium's deferred registration.
+   */
   release(): void {
-    if (this.#release(true)) {
+    if (this.#refreshRegistrations(true)) {
       this.#host.changed();
     }
   }
 
-  // Registers forms that became tools and replaces or removes those that changed.
   update(): void {
-    let changed = this.#release();
+    let changed = this.#refreshRegistrations();
     // The first form to claim a free name holds it, in document order.
     for (const form of this.#document.forms) {
       if (this.#registrations.has(form)) {
@@ -195,8 +193,7 @@ export class DeclarativeTools {
     }
   }
 
-  // Chromium treats every trusted submission of a waiting form as the agent's. An event can
-  // become one only once, and only while it is being dispatched.
+  /** A waiting tool call owns the form's next trusted submission, including a user's. */
   submitting(event: Event): void {
     if (!event.isTrusted || event.eventPhase === Event.NONE || submissions.has(event)) {
       return;
@@ -212,7 +209,7 @@ export class DeclarativeTools {
     queueTask(() => this.#settle(pending, event));
   }
 
-  #release(onlyInvalid = false): boolean {
+  #refreshRegistrations(removeOnly = false): boolean {
     let changed = false;
     for (const [form, registered] of this.#registrations) {
       // A form moved to another document or into a shadow tree is out of the observer's reach.
@@ -220,11 +217,10 @@ export class DeclarativeTools {
       const sameDeclaration = definition?.declaration === registered.declaration;
       const unchanged =
         sameDeclaration && definition?.serializedSchema === registered.serializedSchema;
-      if (onlyInvalid ? definition !== undefined : unchanged) {
+      if (definition && (removeOnly || unchanged)) {
         continue;
       }
-      // Chromium replaces a changed form's tool in one task, so a form that keeps its name keeps
-      // the tool.
+      // Keep the name claimed while replacing the form's tool.
       if (definition?.name === registered.name) {
         this.#host.tools.set(definition.name, this.#createTool(form, definition));
         this.#registrations.set(form, definition);
@@ -233,15 +229,16 @@ export class DeclarativeTools {
         this.#registrations.delete(form);
       }
       changed = true;
-      // Removal and tool attribute changes cancel the form's calls, as in the explainer; a schema
-      // change only replaces the tool. Chromium keeps a call whose form changes during the agent's
-      // submit event; the polyfill notices those changes later, so it keeps a submitting call.
-      if (!sameDeclaration) {
-        for (const pending of this.#callsOf(form)) {
-          if (pending.phase !== "submitting") {
-            pending.reject();
-          }
+      // Schema changes replace the tool without canceling its calls.
+      if (sameDeclaration) {
+        continue;
+      }
+      for (const pending of this.#callsOf(form)) {
+        // Observers see submit-handler mutations later, so preserve calls until settlement.
+        if (pending.phase === "submitting") {
+          continue;
         }
+        pending.reject();
       }
     }
     return changed;
@@ -257,8 +254,6 @@ export class DeclarativeTools {
     };
   }
 
-  // toolactivated fires between filling and submitting, as the explainer describes; Chromium
-  // fires it after submitting.
   #execute(
     form: HTMLFormElement,
     autosubmit: boolean,
@@ -266,7 +261,6 @@ export class DeclarativeTools {
     signal: AbortSignal,
     activate: () => void,
   ): Promise<unknown> {
-    // Chromium's input is a JSON object, and without autosubmit the user submits with a button.
     if (Array.isArray(input) || (!autosubmit && !defaultButton(this.#document, form))) {
       throw executionError();
     }
@@ -290,12 +284,13 @@ export class DeclarativeTools {
       this.#pending.add(pending);
       signal.addEventListener("abort", () => pending.reject(), { once: true });
 
+      // The explainer puts toolactivated between filling and submitting; Chromium fires it after.
       activate();
       // A toolactivated listener may have settled the call or submitted the form itself.
       if (!this.#pending.has(pending) || pending.phase !== "waiting") {
         return;
       }
-      // Listeners may have replaced or disabled the button while the form was filled.
+      // Filling and toolactivated listeners can replace or disable the submit button.
       const submitter = defaultButton(this.#document, form);
       if (!autosubmit) {
         submitter?.focus();
@@ -310,26 +305,28 @@ export class DeclarativeTools {
   }
 
   #settle(pending: PendingSubmission, event: Event): void {
-    // Until now, respondWith() works even after a listener resets the form or submits it from
-    // script; Chromium also accepts that response during dispatch, then ignores it.
+    // Close respondWith() even if reset or script submission already settled the call.
     pending.phase = "handled";
     if (!this.#pending.has(pending)) {
       return;
     }
     if (pending.response) {
       pending.response.then(pending.resolve, pending.reject);
-    } else if (event.defaultPrevented) {
-      pending.reject();
-    } else {
-      pending.resolve(navigated);
+      return;
     }
+    if (event.defaultPrevented) {
+      pending.reject();
+      return;
+    }
+    pending.resolve(navigated);
   }
 
   #resetting(event: Event): void {
-    if (event.isTrusted && !event.defaultPrevented) {
-      for (const pending of this.#callsOf(event.target)) {
-        pending.reject();
-      }
+    if (!event.isTrusted || event.defaultPrevented) {
+      return;
+    }
+    for (const pending of this.#callsOf(event.target)) {
+      pending.reject();
     }
   }
 
@@ -342,31 +339,17 @@ export class DeclarativeTools {
   }
 }
 
-type ControlKind =
-  | "text"
-  | "date"
-  | "datetime-local"
-  | "month"
-  | "week"
-  | "time"
-  | "number"
-  | "range"
-  | "checkbox"
-  | "radio"
-  | "color"
-  | "select";
-
 type FormControl = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
 type Parameter =
-  | { kind: "checkbox" | "radio"; controls: HTMLInputElement[] }
+  | { kind: "checkbox" | "radio"; controls: [HTMLInputElement, ...HTMLInputElement[]] }
   | { kind: "select"; control: HTMLSelectElement }
+  | { kind: "text"; control: HTMLInputElement | HTMLTextAreaElement }
   | {
-      kind: Exclude<ControlKind, "checkbox" | "radio" | "select">;
-      control: HTMLInputElement | HTMLTextAreaElement;
+      kind: "date" | "datetime-local" | "month" | "week" | "time" | "number" | "range" | "color";
+      control: HTMLInputElement;
     };
 
-// Attributes that can change a form's tool definition; text changes can too (labels, options).
 const definingAttributes = [
   "toolname",
   "tooldescription",
@@ -410,7 +393,6 @@ function readDefinition(form: HTMLFormElement): FormDefinition | undefined {
   };
 }
 
-// Properties keep the order in which their names first appear, as in Chromium.
 function inputSchema(form: HTMLFormElement): object {
   const properties = new Map<string, object>();
   const required: string[] = [];
@@ -454,10 +436,20 @@ function parameterName(element: Element): string | undefined {
   if (isHTML(element, "object") || isDisabledOrReadOnly(element)) {
     return undefined;
   }
-  return name.trim();
+  return stripWhitespace(name);
 }
 
-// Input types to which the readonly attribute applies.
+/**
+ * Preserves the names and labels that Blink's StripWhiteSpace treats as distinct. String.trim()
+ * would also strip non-breaking spaces, paragraph separators and BOMs.
+ */
+function stripWhitespace(value: string): string {
+  return value.replace(
+    /^[\t-\r \u1680\u2000-\u200a\u2028\u205f\u3000]+|[\t-\r \u1680\u2000-\u200a\u2028\u205f\u3000]+$/gu,
+    "",
+  );
+}
+
 const readOnlyTypes = new Set([
   "text",
   "search",
@@ -473,7 +465,6 @@ const readOnlyTypes = new Set([
   "number",
 ]);
 
-// Chromium skips disabled controls, and readonly ones where readonly applies.
 function isDisabledOrReadOnly(element: Element): boolean {
   if (element.matches(":disabled")) {
     return true;
@@ -486,7 +477,6 @@ function isDisabledOrReadOnly(element: Element): boolean {
   );
 }
 
-// A parameter is one control of a supported kind, or a group of only checkboxes or radios.
 function readParameter(controls: Element[]): Parameter | undefined {
   const kinds = new Set(controls.map(controlKind));
   const [kind] = kinds;
@@ -497,11 +487,11 @@ function readParameter(controls: Element[]): Parameter | undefined {
   if (!isGroup && controls.length !== 1) {
     return undefined;
   }
-  // SAFETY: controlKind() gives each kind only to the element types Parameter declares for it.
+  // SAFETY: the group is nonempty, and controlKind() establishes each kind's element types.
   return (isGroup ? { kind, controls } : { kind, control: controls[0] }) as Parameter;
 }
 
-function controlKind(element: Element): ControlKind | undefined {
+function controlKind(element: Element): Parameter["kind"] | undefined {
   if (isHTML(element, "textarea")) {
     return "text";
   }
@@ -539,7 +529,7 @@ function controlKind(element: Element): ControlKind | undefined {
   }
 }
 
-// Firefox and Safari have no month or week inputs, but the author's type still applies.
+/** Preserves authored month/week types when the browser reflects unsupported types as text. */
 function inputType(input: HTMLInputElement): string {
   const type = input.getAttribute("type")?.toLowerCase();
   return type === "month" || type === "week" ? type : input.type;
@@ -631,7 +621,10 @@ function arrayOf(items: object): object {
   return { type: "array", items, uniqueItems: true };
 }
 
-// Chromium includes a pattern only on input elements, and only if it compiles with the v flag.
+/**
+ * HTML patterns use Unicode sets syntax, so validation requires the v flag.
+ * @see https://html.spec.whatwg.org/multipage/input.html#attr-input-pattern
+ */
 function patternOf(control: Element): { pattern?: string } {
   const pattern = isHTML(control, "input") ? control.getAttribute("pattern") : null;
   if (pattern === null) {
@@ -654,21 +647,27 @@ function numberLimits(control: Element): object {
   };
 }
 
-// https://html.spec.whatwg.org/multipage/input.html#range-state-(type=range)
+/** @see https://html.spec.whatwg.org/multipage/input.html#range-state-(type=range) */
 function rangeLimits(control: Element): object {
   const minimum = parseNumber(control.getAttribute("min")) ?? 0;
   const maximum = Math.max(parseNumber(control.getAttribute("max")) ?? 100, minimum);
   return { minimum, maximum };
 }
 
-// Chromium states the step only when the step base is also a multiple of it.
-function multipleOf(control: Element): { multipleOf?: number } {
-  const step = parseStep(control, 1);
-  return step !== undefined && isMultiple(stepBase(control), step) ? { multipleOf: step } : {};
+/** multipleOf cannot express HTML's step offset unless the base is also a multiple of the step. */
+function multipleOf(control: HTMLInputElement): { multipleOf?: number } {
+  const isRange = control.type === "range";
+  const step = parseStep(control, 1) ?? (isRange ? 1 : undefined);
+  if (step === undefined) {
+    return {};
+  }
+  const stepAttribute = control.getAttribute("step");
+  const stepText =
+    stepAttribute !== null && parseNumber(stepAttribute) === step ? stepAttribute : String(step);
+  return isMultiple(stepBase(control), stepText) ? { multipleOf: step } : {};
 }
 
-// Chromium varies the time formats with the step to suggest the precision it accepts. It rounds
-// the step to whole milliseconds, at least one, and treats "any" as the default minute.
+/** Suggests the time precision accepted by the control's step, matching Chromium's schema. */
 function secondsPattern(control: Element): string {
   const step = Math.max(Math.round((parseStep(control, 60) ?? 60) * 1000), 1);
   if (step < 1000) {
@@ -677,37 +676,100 @@ function secondsPattern(control: Element): string {
   return step < 60000 ? "(:[0-5][0-9])?" : "";
 }
 
-function parameterDescription(parameter: Parameter): string | undefined {
-  const controls: FormControl[] =
-    "controls" in parameter ? parameter.controls : [parameter.control];
-  const [control] = controls;
-  if (control && controls.length === 1) {
-    return (
-      control.getAttribute("toolparamdescription") ||
-      labelText(control) ||
-      control.getAttribute("aria-description") ||
-      undefined
-    );
+/**
+ * @returns undefined for step="any".
+ * @see https://html.spec.whatwg.org/multipage/input.html#concept-input-step
+ */
+function parseStep(control: Element, defaultStep: number): number | undefined {
+  const value = control.getAttribute("step");
+  if (value?.toLowerCase() === "any") {
+    return undefined;
   }
-  // A group is described only by the nearest fieldset around all of its controls.
-  return commonFieldset(controls)?.getAttribute("toolparamdescription") || undefined;
+  const step = parseNumber(value);
+  return step !== undefined && step > 0 ? step : defaultStep;
 }
 
-function commonFieldset(controls: FormControl[]): HTMLFieldSetElement | undefined {
+/**
+ * Keeps raw attribute text for exact decimal divisibility checks.
+ * @see https://html.spec.whatwg.org/multipage/input.html#concept-input-min-zero
+ */
+function stepBase(control: Element): string {
+  return (
+    [control.getAttribute("min"), control.getAttribute("value")].find(
+      (value) => parseNumber(value) !== undefined,
+    ) ?? "0"
+  );
+}
+
+/** Checks divisibility before Number conversion can round away a decimal remainder. */
+function isMultiple(value: string, step: string): boolean {
+  const base = decimalParts(value);
+  const increment = decimalParts(step);
+  if (!base || !increment) {
+    return false;
+  }
+  const commonExponent = Math.min(base.exponent, increment.exponent);
+  const dividend = base.coefficient * 10n ** BigInt(base.exponent - commonExponent);
+  const divisor = increment.coefficient * 10n ** BigInt(increment.exponent - commonExponent);
+  return dividend % divisor === 0n;
+}
+
+function decimalParts(value: string): { coefficient: bigint; exponent: number } | undefined {
+  const [significand = "", exponentText = "0"] = value.toLowerCase().split("e");
+  const fractionLength = significand.split(".")[1]?.length ?? 0;
+  const coefficientText = significand.replace(".", "").replace(/^(-?)0+(?=\d)/u, "$1");
+  const exponent = Number(exponentText) - fractionLength;
+  // Omit constraints that would require Blink's Decimal rounding beyond these bounds.
+  if (coefficientText.replace("-", "").length > 18 || Math.abs(exponent) > 1023) {
+    return undefined;
+  }
+  return { coefficient: BigInt(coefficientText), exponent };
+}
+
+/**
+ * HTML numeric syntax excludes some strings that Number() accepts.
+ * @see https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#valid-floating-point-number
+ */
+function parseNumber(value: string | null): number | undefined {
+  if (value === null || !/^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?$/u.test(value)) {
+    return undefined;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function parameterDescription(parameter: Parameter): string | undefined {
+  if ("controls" in parameter && parameter.controls.length > 1) {
+    // A group is described only by the nearest fieldset around all of its controls.
+    return commonFieldset(parameter.controls)?.getAttribute("toolparamdescription") || undefined;
+  }
+  const control = "controls" in parameter ? parameter.controls[0] : parameter.control;
+  return (
+    control.getAttribute("toolparamdescription") ||
+    labelText(control) ||
+    control.getAttribute("aria-description") ||
+    undefined
+  );
+}
+
+function commonFieldset(
+  controls: [FormControl, ...FormControl[]],
+): HTMLFieldSetElement | undefined {
   const [first] = controls;
-  let ancestor: Element | null = first ?? null;
+  let ancestor: Element | null = first;
+  // Either climb can reach a form whose named controls shadow parentElement or contains.
   for (const control of controls) {
-    // The ancestor can be the form, whose controls may shadow the members it inherits from Node.
     while (ancestor && !Node.prototype.contains.call(ancestor, control)) {
       // SAFETY: parentElement is an Element or null.
       ancestor = Reflect.get(Node.prototype, "parentElement", ancestor) as Element | null;
     }
   }
-  const form = first?.form;
-  for (let element = ancestor; element && element !== form; element = element.parentElement) {
-    if (isHTML(element, "fieldset")) {
-      return element;
+  const form = first.form;
+  while (ancestor && ancestor !== form) {
+    if (isHTML(ancestor, "fieldset")) {
+      return ancestor;
     }
+    ancestor = Reflect.get(Node.prototype, "parentElement", ancestor) as Element | null;
   }
   return undefined;
 }
@@ -731,11 +793,11 @@ function labelText(control: FormControl): string {
         text += (node as Text).data;
       }
     }
-    return text.trim();
+    return stripWhitespace(text);
   }).join("; ");
 }
 
-// https://html.spec.whatwg.org/multipage/forms.html#category-label
+/** @see https://html.spec.whatwg.org/multipage/forms.html#category-label */
 function isLabelable(element: Element): boolean {
   if (isHTML(element, "input")) {
     return element.type !== "hidden";
@@ -744,8 +806,10 @@ function isLabelable(element: Element): boolean {
   return labelable.some((name) => isHTML(element, name)) || isFormAssociatedCustom(element);
 }
 
-// Chromium's FormMCPSchema::FillData: every value is checked before any control changes, and
-// controls change in the input's key order.
+/**
+ * Validates every value before changing any control, so invalid input cannot partly fill the form.
+ * Writes follow input key order, which the page's input and change listeners can observe.
+ */
 function fillForm(form: HTMLFormElement, input: object): void {
   const groups = controlsByName(form);
   const writes = Object.entries(input).map(([name, value]) => {
@@ -766,7 +830,7 @@ function prepareWrite(parameter: Parameter, value: unknown): (() => void) | unde
   switch (parameter.kind) {
     case "checkbox": {
       const [checkbox] = parameter.controls;
-      return checkbox && parameter.controls.length === 1
+      return parameter.controls.length === 1
         ? checkboxWrite(checkbox, value)
         : choicesWrite(parameter.controls, value);
     }
@@ -777,9 +841,12 @@ function prepareWrite(parameter: Parameter, value: unknown): (() => void) | unde
     case "number":
     case "range": {
       const { control } = parameter;
-      // Numbers cannot be cleared.
+      // Chromium rejects empty values for numeric tool parameters.
       const text = toText(value);
-      return text && acceptsValue(control, text) ? () => setValue(control, text) : undefined;
+      if (!text || !acceptsValue(control, text)) {
+        return undefined;
+      }
+      return () => setValue(control, text);
     }
     default: {
       const { control } = parameter;
@@ -880,15 +947,15 @@ function setValue(control: HTMLInputElement | HTMLTextAreaElement, text: string)
   }
 }
 
-// Chromium fires change at a checkbox or radio even when its checkedness stays.
+/** Fires change even for unchanged checkboxes and radios, matching Chromium's tool filling. */
 function setChecked(control: HTMLInputElement, checked: boolean): void {
   const before = control.checked;
   setProperty(control, HTMLInputElement.prototype, "checked", checked);
   if (control.checked !== before) {
     dispatchInputAndChange(control);
-  } else {
-    control.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
   }
+  control.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 function dispatchInputAndChange(control: Element): void {
@@ -896,7 +963,7 @@ function dispatchInputAndChange(control: Element): void {
   control.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-// Chromium's value sanitization check, on a detached input of the same type.
+/** Uses native value sanitization to check input without changing the live form. */
 function acceptsValue(control: HTMLInputElement | HTMLTextAreaElement, text: string): boolean {
   if (!isHTML(control, "input")) {
     return true;
@@ -911,13 +978,13 @@ function acceptsValue(control: HTMLInputElement | HTMLTextAreaElement, text: str
   return probe.value !== "";
 }
 
-// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#valid-month-string
+/** @see https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#valid-month-string */
 function isValidMonth(text: string): boolean {
   const [, year, month] = /^(\d{4,})-(\d{2})$/u.exec(text) ?? [];
   return Number(year) > 0 && Number(month) >= 1 && Number(month) <= 12;
 }
 
-// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#valid-week-string
+/** @see https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#valid-week-string */
 function isValidWeek(text: string): boolean {
   const [, year, week] = /^(\d{4,})-W(\d{2})$/u.exec(text) ?? [];
   return Number(year) > 0 && Number(week) >= 1 && Number(week) <= weeksInYear(Number(year));
@@ -932,38 +999,6 @@ function weeksInYear(year: number): number {
   return weekday === 4 || (weekday === 3 && leap) ? 53 : 52;
 }
 
-// https://html.spec.whatwg.org/multipage/input.html#concept-input-step
-// Undefined means "any".
-function parseStep(control: Element, defaultStep: number): number | undefined {
-  const value = control.getAttribute("step");
-  if (value?.toLowerCase() === "any") {
-    return undefined;
-  }
-  const step = parseNumber(value);
-  return step !== undefined && step > 0 ? step : defaultStep;
-}
-
-// https://html.spec.whatwg.org/multipage/input.html#concept-input-min-zero
-function stepBase(control: Element): number {
-  const minimum = parseNumber(control.getAttribute("min"));
-  return minimum ?? parseNumber(control.getAttribute("value")) ?? 0;
-}
-
-// Chromium divides exact decimals; 12 significant digits absorb binary error for realistic steps.
-function isMultiple(value: number, step: number): boolean {
-  return Number.isInteger(Number((value / step).toPrecision(12)));
-}
-
-// https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#valid-floating-point-number
-function parseNumber(value: string | null): number | undefined {
-  if (value === null || !/^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?$/u.test(value)) {
-    return undefined;
-  }
-  const number = Number(value);
-  return Number.isFinite(number) ? number : undefined;
-}
-
-// Chromium's ToString: strings, numbers and booleans.
 function toText(value: unknown): string | undefined {
   if (typeof value === "string") {
     return value;
@@ -971,7 +1006,6 @@ function toText(value: unknown): string | undefined {
   return typeof value === "number" || typeof value === "boolean" ? String(value) : undefined;
 }
 
-// Chromium's ToBoolean: booleans, integers, and "true", "false", "1" or "0" in any case.
 function toBoolean(value: unknown): boolean | undefined {
   if (typeof value === "boolean") {
     return value;
@@ -989,13 +1023,15 @@ function toBoolean(value: unknown): boolean | undefined {
   return text === "false" || text === "0" ? false : undefined;
 }
 
-// Chromium stringifies an object response as JSON and converts any other value to a string.
-// String() turns an object that JSON leaves undefined into "undefined", as V8's JSON::Stringify.
+/** Produces "undefined" when JSON serialization returns undefined, as V8's JSON::Stringify does. */
 function serializeResponse(response: unknown): string {
   return String(isObject(response) ? JSON.stringify(response) : response);
 }
 
-// A control named like a form member shadows it on the form ([LegacyOverrideBuiltIns]).
+/**
+ * Reads form members that named controls may shadow on the instance.
+ * @see https://webidl.spec.whatwg.org/#LegacyOverrideBuiltIns
+ */
 function formMember<Name extends keyof HTMLFormElement>(
   form: HTMLFormElement,
   name: Name,
@@ -1004,8 +1040,7 @@ function formMember<Name extends keyof HTMLFormElement>(
   return Reflect.get(HTMLFormElement.prototype, name, form) as HTMLFormElement[Name];
 }
 
-// The first enabled submit button in tree order: Chromium focuses it or submits with it.
-// form.elements leaves out image buttons, so the search covers the document.
+/** Searches the document because form.elements omits image buttons. */
 function defaultButton(
   owner: Document,
   form: HTMLFormElement,
@@ -1020,15 +1055,21 @@ function defaultButton(
   return undefined;
 }
 
-// customElements.define() converts a constructor's formAssociated to a boolean.
+/**
+ * Native matching uses the form association captured when the element was defined.
+ * @see https://html.spec.whatwg.org/multipage/semantics-other.html#selector-enabled
+ */
 function isFormAssociatedCustom(element: Element): boolean {
-  const definition = customElements.get(element.localName);
-  return definition !== undefined && Boolean(Reflect.get(definition, "formAssociated"));
+  // Match first: a form may shadow both matches and localName with named controls.
+  return (
+    Element.prototype.matches.call(element, ":enabled, :disabled") &&
+    element.localName.includes("-")
+  );
 }
 
 const htmlNamespace = "http://www.w3.org/1999/xhtml";
 
-// An element's local name identifies it in any window; instanceof fails for adopted nodes.
+/** Identifies HTML elements across windows; instanceof fails for adopted nodes. */
 function isHTML<Name extends keyof HTMLElementTagNameMap>(
   element: Element,
   name: Name,
@@ -1037,9 +1078,16 @@ function isHTML<Name extends keyof HTMLElementTagNameMap>(
   return element.namespaceURI === htmlNamespace && element.localName === name;
 }
 
-// Prototype setters bypass page overrides and the value trackers of frameworks such as React,
-// which then see the change when the input event arrives.
-function setProperty(element: Element, prototype: object, name: string, value: unknown): void {
+/** Bypasses framework value trackers so they detect the change when the input event arrives. */
+function setProperty<
+  Control extends Element,
+  Name extends keyof Control & ("value" | "checked" | "selected"),
+>(
+  element: Control,
+  prototype: object,
+  name: Name,
+  value: Control[Name],
+): void {
   // SAFETY: callers name value, checked or selected, accessors with setters on these prototypes.
   Object.getOwnPropertyDescriptor(prototype, name)!.set!.call(element, value);
 }

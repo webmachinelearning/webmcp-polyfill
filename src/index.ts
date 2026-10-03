@@ -34,7 +34,7 @@ const contexts = new WeakMap<Document, ModelContextPolyfill>();
  * Installing joins cross-frame discovery: the window listens for the polyfill's messages and
  * announces itself to the other frames of its tree.
  *
- * @throws {TypeError} If the window or Document prototype prevents installation.
+ * @throws {TypeError} If the window or a required DOM prototype prevents installation.
  * @example
  * import { installWebMCP } from "webmcp-polyfill";
  * installWebMCP();
@@ -132,7 +132,7 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
       },
       changed: () => this.#queueToolChange(),
     });
-    // Forms become tools as soon as a policy check passes.
+    // Try form discovery now; public operations retry failed policy checks.
     this.#requireFrames().catch(() => {});
   }
 
@@ -295,8 +295,8 @@ class ModelContextPolyfill extends EventTarget implements WebMCP.ModelContext {
             callerSignal,
           )
         : frames.execute(target.window, expectedOrigin, target.name, serializedInput, callerSignal);
-    // SAFETY: only a declarative tool whose form navigates resolves null, as in Chromium and WPT;
-    // the draft and webmcp-types declare a string.
+    // Declarative navigation resolves null in Chromium and WPT, although the draft and
+    // webmcp-types declare a string result.
     return result as Promise<string>;
   }
 
@@ -503,7 +503,9 @@ function readToolDefinition(value: unknown) {
 }
 
 // Convert the whole RegisteredTool dictionary, even members not used for dispatch.
-function readExecutionTarget(value: unknown) {
+function readExecutionTarget(
+  value: unknown,
+): Pick<WebMCP.RegisteredTool, "name" | "origin" | "window"> {
   const descriptor = readDictionary(value);
   readAnnotations(descriptor.annotations);
   toDOMString(requireMember(descriptor.description, "description"));

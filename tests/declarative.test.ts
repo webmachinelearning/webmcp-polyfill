@@ -47,6 +47,167 @@ test("a form with a tool name and description becomes a discoverable tool", asyn
   ]);
 });
 
+test("parameter names and labels use Chromium's whitespace rules without merging controls", async ({
+  page,
+}) => {
+  const expectedNames = [
+    "x",
+    "\u00a0x\u00a0",
+    "\u2029x\u2029",
+    "\u202fx\u202f",
+    "\ufeffx\ufeff",
+    "trimmed",
+  ];
+  const outcome = await page.evaluate(async (names) => {
+    document.body.innerHTML = `
+      <form toolname="whitespace" tooldescription="Distinct parameters" toolautosubmit></form>`;
+    const form = document.forms[0]!;
+    for (const [index, name] of names.entries()) {
+      const label = document.createElement("label");
+      label.textContent = `\t\u1680${name}\u3000\r`;
+      const input = document.createElement("input");
+      input.name = index === names.length - 1 ? `\t\u1680${name}\u3000\r` : name;
+      label.append(input);
+      form.append(label);
+    }
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      event.respondWith(
+        Promise.resolve(Array.from(form.querySelectorAll("input"), (input) => input.value)),
+      );
+    });
+    const context = document.modelContext!;
+    const [tool] = await context.getTools();
+    return {
+      schema: tool!.inputSchema,
+      result: await context.executeTool(
+        tool!,
+        Object.fromEntries(names.map((name, index) => [name, String(index)])),
+      ),
+    };
+  }, expectedNames);
+
+  expect(outcome).toEqual({
+    schema: {
+      type: "object",
+      properties: Object.fromEntries(
+        expectedNames.map((name) => [name, { type: "string", description: name }]),
+      ),
+      required: [],
+    },
+    result: '["0","1","2","3","4","5"]',
+  });
+});
+
+test("numeric schemas preserve decimal step bases and the range default step", async ({ page }) => {
+  const outcome = await page.evaluate(async () => {
+    document.body.innerHTML = `
+      <form toolname="steps" tooldescription="Decimal steps">
+        <input name="odd" type="number" min="1000000000001" step="2">
+        <input name="even" type="number" min="1000000000002" step="2">
+        <input name="fraction" type="number" min="0.3" step="0.1">
+        <input name="offset" type="number" min="0.30000000000000004" step="0.1">
+        <input name="exponent" type="number" min="3e-10" step="1e-10">
+        <input name="exponentOffset" type="number" min="1e-9" step="3e-10">
+        <input name="roundedOdd" type="number" min="9007199254740993" step="2">
+        <input name="valueBase" type="number" value="1000000000001" step="2">
+        <input name="negative" type="number" min="-0.3" step="0.1">
+        <input name="invalidMinimum" type="number" min="invalid" value="0.3" step="0.1">
+        <input name="highPrecision" type="number" min="1000000000000000000001" step="2">
+        <input name="extremeExponent" type="number" min="1e-2000" step="2">
+        <input name="rangeAny" type="range" step="any">
+        <input name="numberAny" type="number" step="any">
+      </form>`;
+    const [tool] = await document.modelContext!.getTools();
+    const properties = (
+      tool!.inputSchema as { properties: Record<string, { multipleOf?: number }> }
+    ).properties;
+    return Object.fromEntries(
+      Object.entries(properties).map(([name, schema]) => [name, schema.multipleOf ?? null]),
+    );
+  });
+
+  expect(outcome).toEqual({
+    odd: null,
+    even: 2,
+    fraction: 0.1,
+    offset: null,
+    exponent: 1e-10,
+    exponentOffset: null,
+    roundedOdd: null,
+    valueBase: null,
+    negative: 0.1,
+    invalidMinimum: 0.1,
+    highPrecision: null,
+    extremeExponent: null,
+    rangeAny: 1,
+    numberAny: null,
+  });
+});
+
+test("fieldset descriptions bypass named controls on an ancestor form", async ({ page }) => {
+  const schema = await page.evaluate(async () => {
+    document.body.innerHTML = `
+      <form id="tool" toolname="sizes" tooldescription="Sizes"></form>
+      <fieldset toolparamdescription="Size">
+        <form><input name="parentElement">
+          <input type="radio" name="size" value="s" form="tool">
+          <input type="radio" name="size" value="m" form="tool">
+        </form>
+      </fieldset>`;
+    const [tool] = await document.modelContext!.getTools();
+    return tool!.inputSchema;
+  });
+
+  expect(schema).toEqual({
+    type: "object",
+    properties: {
+      size: {
+        type: "string",
+        anyOf: [{ type: "string", const: "s" }, { type: "string", const: "m" }],
+        enum: ["s", "m"],
+        description: "Size",
+      },
+    },
+    required: [],
+  });
+});
+
+test("custom elements retain the form association captured at registration", async ({ page }) => {
+  const outcome = await page.evaluate(async () => {
+    let associated = true;
+    let reads = 0;
+    class CustomControl extends HTMLElement {
+      static get formAssociated() {
+        reads++;
+        return associated;
+      }
+    }
+    customElements.define("custom-control", CustomControl);
+    associated = false;
+    document.body.innerHTML = `
+      <label for="x">Label
+        <custom-control disabled>Excluded</custom-control>
+        <form><input name="localName"><input name="matches"></form>
+      </label>
+      <form toolname="custom" tooldescription="Custom controls">
+        <input id="x" name="x">
+        <custom-control name=" x "></custom-control>
+      </form>`;
+    const [tool] = await document.modelContext!.getTools();
+    return { schema: tool!.inputSchema, reads };
+  });
+
+  expect(outcome).toEqual({
+    schema: {
+      type: "object",
+      properties: { x: { type: "string", description: "Label" } },
+      required: [],
+    },
+    reads: 1,
+  });
+});
+
 test("form schemas match Chromium's for every supported control", async ({ page }) => {
   const schemas = await page.evaluate(async (cases) => {
     const context = document.modelContext!;
@@ -303,9 +464,7 @@ test("executing an autosubmit form fills it, then submits for the page's respons
   });
 });
 
-test("filling converts values and fires input and change events like Chromium", async ({
-  page,
-}) => {
+test("filling converts values and fires input and change events", async ({ page }) => {
   const outcome = await page.evaluate(async () => {
     const context = document.modelContext!;
     document.body.innerHTML = `
@@ -522,6 +681,11 @@ test("the call settles with the page's response, null for a navigation, or an er
 }) => {
   const outcome = await page.evaluate(async () => {
     const context = document.modelContext!;
+    const unhandled: string[] = [];
+    addEventListener("unhandledrejection", (event) => {
+      unhandled.push(String(event.reason));
+      event.preventDefault();
+    });
     document.body.innerHTML = `
       <iframe name="target"></iframe>
       <form toolname="submit" tooldescription="Submit" toolautosubmit action="/" target="target">
@@ -572,7 +736,7 @@ test("the call settles with the page's response, null for a navigation, or an er
     results.invalid = await context
       .executeTool(tool!, { query: "" })
       .catch((error) => error.name);
-    return { results, submitted };
+    return { results, submitted, unhandled };
   });
 
   expect(outcome).toEqual({
@@ -590,7 +754,38 @@ test("the call settles with the page's response, null for a navigation, or an er
       invalid: "UnknownError",
     },
     submitted: false,
+    unhandled: [],
   });
+});
+
+test("respondWith() adopts the response before page code can change its promise methods", async ({
+  page,
+}) => {
+  const result = await page.evaluate(async () => {
+    document.body.innerHTML = `
+      <form toolname="response" tooldescription="Response" toolautosubmit></form>`;
+    document.forms[0]!.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const response = Promise.resolve("ok");
+      Object.defineProperty(response, "catch", {
+        get() {
+          throw new Error("The response's catch override was read");
+        },
+      });
+      event.respondWith(response);
+      // oxlint-disable-next-line unicorn/no-thenable -- Tests mutation after promise conversion.
+      Object.defineProperty(response, "then", {
+        get() {
+          throw new Error("The response's later then override was read");
+        },
+      });
+    });
+    const context = document.modelContext!;
+    const [tool] = await context.getTools();
+    return context.executeTool(tool!);
+  });
+
+  expect(result).toBe("ok");
 });
 
 test("SubmitEvent gains agentInvoked and respondWith() with Chromium's checks", async ({
@@ -908,7 +1103,7 @@ test("a reset, removal or new declaration cancels a waiting call; a new schema d
         (value) => `resolved ${value}`,
         (error) => error.name,
       );
-      await Promise.race([activated, call]);
+      await activated;
       return { call };
     };
 

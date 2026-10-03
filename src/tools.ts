@@ -3,20 +3,19 @@ import type { WebMCP } from "webmcp-types";
 /** Tool metadata as its owner stores it and as frames exchange it. */
 export interface ToolMetadata
   extends Pick<WebMCP.RegisteredTool, "name" | "title" | "description"> {
-  annotations: WebMCP.ToolAnnotations | undefined;
-  // Snapshot at registration; each discovery result parses a fresh copy.
+  annotations: WebMCP.RegisteredTool["annotations"];
+  /** Snapshot at registration; each discovery result parses a fresh copy. */
   serializedSchema: string | undefined;
 }
 
 /** A tool as its owner stores it, whether registered by script or declared by a form. */
 export interface StoredTool {
   metadata: ToolMetadata;
-  // Origins other than the owner's that may discover and execute the tool.
+  /** Origins other than the owner's that may discover and execute the tool. */
   exposedTo: string[];
-  // The draft's execute steps. run() calls activate(), which fires toolactivated, before it
-  // returns; if run() throws first, the call fails without the event.
+  /** Calls activate() before returning; throwing first fails the call without toolactivated. */
   run(input: object, signal: AbortSignal, activate: () => void): unknown;
-  // Converts the value run() returns, or its promise fulfills with, into the result.
+  /** Converts run()'s return value or promise fulfillment to the browser-facing response. */
   serialize(result: unknown): string | null;
 }
 

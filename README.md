@@ -56,7 +56,7 @@ For explicit installation, call `installWebMCP()` from `webmcp-polyfill`. Repeat
 
 ### Declarative tools
 
-A form with `toolname` and `tooldescription` attributes is a tool. Its named controls make up the input schema, each described by its `toolparamdescription`, label, or `aria-description`; disabled and read-only controls are left out. Same-named checkboxes or radio buttons are one parameter, described by the `toolparamdescription` of the nearest `fieldset` around them:
+A form with `toolname` and `tooldescription` attributes is a tool. Its named controls make up the input schema, each described by its `toolparamdescription`, label, or `aria-description`. Disabled controls and controls with an applicable `readonly` attribute are left out. When multiple checkboxes or multiple radio buttons share a name, they form one parameter, described by the `toolparamdescription` of the nearest `fieldset` around them:
 
 ```html
 <form toolname="search-flights" tooldescription="Search for flights" toolautosubmit>
@@ -116,7 +116,7 @@ For cross-origin tools, delegate the `tools` permission on the iframe, register 
 <iframe src="https://tools.example/app" allow="tools https://tools.example"></iframe>
 ```
 
-Initial discovery waits up to 500 ms for existing frames. Requests use `MessageChannel` after checking the peer's source and origin; callbacks run in their owning frame. Cancellation preserves the caller's reason and sends the callback a default `AbortError`.
+Initial discovery waits up to 500 ms for existing frames. Callbacks run in their owning frame. Cancellation preserves the caller's reason and sends the callback a default `AbortError`.
 
 ## Implementation status
 
@@ -127,10 +127,6 @@ Native contexts do not join the polyfill's channels. See [TESTING.md](https://gi
 `executeTool()` accepts an object and returns a JSON-serialized result, or a declarative tool's response, which is `null` if its form navigates. Omitted or `undefined` input defaults to a fresh empty object. Callbacks must validate their inputs; schema inference provides TypeScript checks only.
 
 Breaking API changes ship with notes: in minor releases while the version is 0.x, in majors after 1.0.
-
-## Development
-
-`src/` holds the polyfill, `tests/` the browser and package checks, and `wpt/` the upstream runner, pin, and expectations.
 
 ## License
 

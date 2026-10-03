@@ -2,7 +2,7 @@
 
 ## Results
 
-**238 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
+**349 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
 Playwright WebKit 26.6. Package checks also pass: imports, types, SSR, and tarball contents.
 CI runs these checks plus WPT in Chrome, Firefox, and actual Safari. Safari runs on
 `macos-26`; Playwright WebKit is a separate build.
@@ -12,19 +12,24 @@ in Chrome and Firefox:
 
 | Subtest result | Count |
 | --- | ---: |
-| PASS | 116 |
-| Expected FAIL | 33 |
-| Expected TIMEOUT | 25 |
-| Expected NOTRUN | 16 |
+| PASS | 147 |
+| Expected FAIL | 37 |
+| Expected TIMEOUT | 5 |
+| Expected NOTRUN | 1 |
 
-Tested with Chrome Canary 157.0.8080.0 and Firefox Nightly 159.0a1 (20260930214513).
-Safari has not yet run at this pin; none of the expectations are browser-specific.
-At the file level: 44 OK, 25 expected timeouts, one expected error.
+Tested locally with Chrome Canary 157.0.8084.0 and Firefox Nightly 158.0a1.
+At the file level: 63 OK, five expected timeouts, two expected errors.
+None of the expectations are browser-specific.
+
+The [Safari CI run for PR #9](https://github.com/webmachinelearning/webmcp-polyfill/actions/runs/36969302314/job/110719843222)
+used Safari 26.6.2 and failed: WebDriver could not close test windows, so only
+185 of 190 subtests ran. The recorded subtests had no unexpected results, but
+the incomplete run does not pass the suite.
 
 Expected failures are still failures. `NOTRUN` means an earlier timeout prevented
-the test from running, including one abort case. Passing declarative checks only
-cover rejection or absence of tools. All 38 pinned IDL checks pass. This is not
-full conformance.
+the test from running, including one abort case. All 38 pinned IDL checks pass;
+the pinned IDL does not include the declarative `SubmitEvent` members. This is
+not full conformance.
 
 ## Run locally
 
@@ -70,9 +75,8 @@ and `webmcp-types@0.1.10`.
 
 - **Missing APIs:** scripts cannot add selectors, so the `:tool-form-active` and
   `:tool-submit-active` pseudo-classes are unsupported.
-- **Draft differences:** callback results are JSON-serialized; some pinned tests
-  expect raw strings. Omitted or `undefined` input becomes `{}`; `null` and
-  primitives reject.
+- **Pinned WPT differences:** callback results are JSON-serialized as the draft
+  requires; some pinned tests expect raw strings.
 - **Lifecycle events:** `toolactivated` fires before the callback is invoked, as the
   draft specifies; the pinned `executeTool-abort` test and Chromium fire it after the
   callback starts. Script-dispatched events cannot be
@@ -120,6 +124,11 @@ and `webmcp-types@0.1.10`.
   - Numbers fill controls as `String()` converts them; Chromium formats those that
     are not 32-bit integers with six significant digits, and rejects them for
     checkboxes.
+  - Numeric schema values use JavaScript numbers. Step-base divisibility uses the
+    raw decimal attributes, up to 18 coefficient digits and exponents from -1023
+    to 1023. Beyond those bounds, `multipleOf` is omitted instead of reproducing
+    Blink's Decimal rounding. Its conversion to a schema number can also round
+    differently from JavaScript.
   - The fill's `input` and `change` events are untrusted.
   - `SubmitEventInit` has no `agentInvoked` member, as in the explainer.
   - Forms in shadow trees are unsupported; Chromium registers them, including in
