@@ -1,30 +1,16 @@
 # Testing
 
-## Results
+## What runs
 
-**223 browser tests pass** across Chromium 153.0.8010.12, Firefox 155.0, and
-Playwright WebKit 26.6. Package checks also pass: imports, types, SSR, and tarball contents.
-CI runs these checks plus WPT in Chrome, Firefox, and actual Safari. Safari runs on
-`macos-26`; Playwright WebKit is a separate build.
+`pnpm test` runs lint, build, type checking, and real-browser tests in Chromium,
+Firefox, and Playwright WebKit. `pnpm test:package` checks imports, types, SSR, and
+tarball contents. CI runs both plus WPT in Chrome Canary, Firefox Nightly, and
+Safari on `macos-26`; its logs have the current counts and browser versions.
 
-WPT covers **all 70 WebMCP testharness files, 190 subtests**, with zero unexpected results
-in Chrome and Firefox:
-
-| Subtest result | Count |
-| --- | ---: |
-| PASS | 92 |
-| Expected FAIL | 52 |
-| Expected TIMEOUT | 26 |
-| Expected NOTRUN | 20 |
-
-Tested with Chrome Canary 157.0.8080.0 and Firefox Nightly 159.0a1 (20260930214513).
-Safari has not yet run at this pin; none of the expectations are browser-specific.
-At the file level: 43 OK, 26 expected timeouts, one expected error.
-
-Expected failures are still failures. `NOTRUN` means an earlier timeout prevented
-the test from running, including three abort cases. Passing declarative checks only
-cover rejection or absence of tools. Of the 38 pinned IDL checks, the 16 for lifecycle
-event handlers and interfaces fail. This is not full conformance.
+`pnpm test:wpt` runs every WebMCP testharness file at the pinned revision and prints
+the subtest tally. [Expectations](wpt/metadata/) record each known failure and its
+reason. Expected failures are still failures, and `NOTRUN` means an earlier timeout
+prevented the test from running. This is not full conformance.
 
 ## Run locally
 
@@ -37,9 +23,9 @@ pnpm test
 pnpm test:package
 ```
 
-`pnpm test` runs lint, build, type checking, and browser tests. Polyfill tests disable
-native WebMCP. A separate Chromium test uses `--enable-features=WebMCP` to check
-that loading the polyfill preserves the native context and its tools.
+Polyfill tests disable native WebMCP. A separate Chromium test uses
+`--enable-features=WebMCP` to check that loading the polyfill preserves the native
+context and its tools.
 
 WPT needs Python 3.11+ and a clean checkout at
 [`fe52996`](https://github.com/web-platform-tests/wpt/commit/fe52996d4465f23617bce91927bdd58e6ce8f541).
@@ -65,8 +51,7 @@ other non-testharness files are outside this suite.
 
 ## Draft alignment and limitations
 
-Checked against [draft `d61d0e6`](https://github.com/webmachinelearning/webmcp/blob/d61d0e6d297ddb6bff3510b1330dbb215c6ef43c/index.bs)
-and `webmcp-types@0.1.9`.
+Checked against [draft `d61d0e6`](https://github.com/webmachinelearning/webmcp/blob/d61d0e6d297ddb6bff3510b1330dbb215c6ef43c/index.bs).
 
 - **Missing APIs:** declarative forms, CSS states, and lifecycle events
   (`toolactivated`/`toolcancel`, their handlers, and `ToolActivatedEvent`/`ToolCancelEvent`)
