@@ -95,7 +95,7 @@ Initial discovery waits up to 500 ms for existing frames. Requests use `MessageC
 
 The target is `webmcp-types@0.1.9`: registration, discovery, execution, cancellation, and `toolchange`, including frame exposure and origin filtering. Declarative forms and `toolactivated`/`toolcancel` are not implemented. Browser agent integration requires browser support.
 
-Native contexts do not join the polyfill's channels. See [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) for policy and frame limitations, results, commands, and tracked revisions.
+Native contexts do not join the polyfill's channels. See [TESTING.md](https://github.com/webmachinelearning/webmcp-polyfill/blob/main/TESTING.md) for policy and frame limitations, commands, and tracked revisions.
 
 `executeTool()` accepts an object and returns a JSON-serialized result. Omitted or `undefined` input defaults to a fresh empty object. Callbacks must validate their inputs; schema inference provides TypeScript checks only.
 
