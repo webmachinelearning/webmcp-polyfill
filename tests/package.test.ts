@@ -51,7 +51,7 @@ try {
   ]);
   assert.match(
     readFileSync(join(installedPackage, "dist/polyfill.js"), "utf8"),
-    /SPDX-License-Identifier: MIT/,
+    /SPDX-License-Identifier: Apache-2\.0/,
     "dist/polyfill.js lost its licence banner: check esbuild's --legal-comments=inline",
   );
 

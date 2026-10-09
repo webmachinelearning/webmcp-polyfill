@@ -107,4 +107,4 @@ Breaking API changes ship with notes: in minor releases while the version is 0.x
 
 ## License
 
-[MIT](LICENSE).
+[Apache-2.0](LICENSE).
